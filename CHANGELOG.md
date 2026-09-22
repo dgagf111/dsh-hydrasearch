@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Two verification checks were non-hermetic: they passed only on a machine that
+  had run `tinyfish auth login` and had a `~/.tinyfish/config.json`. On a clean
+  CI runner they failed. The CLI-config precedence check now asserts against a
+  scratch home directory it creates itself, and the single-provider check
+  supplies an explicit key instead of relying on ambient credentials.
+  `resolveTinyfishKey()` gained an injectable `home` parameter so the fallback
+  is provable without touching the developer's real config.
 - `searchTinyfish()` threw `TypeError: Cannot read properties of undefined
   (reading 'length')` when `includeDomains` / `excludeDomains` were omitted,
   despite both being documented as optional. A new `domainList()` normalizer

@@ -18,6 +18,9 @@
  */
 
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import process from 'node:process'
 
 /** Minimal test reporter. */
@@ -327,8 +330,30 @@ await check('a base URL without a trailing slash still hits the root path', asyn
 await check('resolveTinyfishKey honours config, then env, then the CLI config', () => {
   assert.equal(tf.resolveTinyfishKey('  from-config  ', {}), 'from-config')
   assert.equal(tf.resolveTinyfishKey('', { TINYFISH_API_KEY: 'from-env' }), 'from-env')
-  assert.equal(tf.resolveTinyfishKey('', { TINYFISH_API_KEY: '  ' }).length > 0, true, 'blank env falls through to the CLI config')
-  assert.equal(typeof tf.readCliApiKey(), 'string')
+  // The CLI-config fallback is asserted against a SCRATCH home, never the real
+  // one. Reading `os.homedir()` here made this check pass only on a machine
+  // that had run `tinyfish auth login`, and fail on a clean CI runner — the
+  // test has to create the condition it asserts on.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'hydrasearch-home-'))
+  try {
+    assert.equal(tf.readCliApiKey(home), '', 'an absent CLI config means no key, not an error')
+    assert.equal(tf.resolveTinyfishKey('', { TINYFISH_API_KEY: '  ' }, home), '', 'blank env with no CLI config resolves to empty')
+
+    fs.mkdirSync(path.join(home, '.tinyfish'), { recursive: true })
+    fs.writeFileSync(path.join(home, '.tinyfish', 'config.json'), JSON.stringify({ api_key: 'from-cli-file' }))
+    assert.equal(tf.readCliApiKey(home), 'from-cli-file')
+    // Precedence, now provable end to end: config beats env beats the file.
+    assert.equal(tf.resolveTinyfishKey('', { TINYFISH_API_KEY: '  ' }, home), 'from-cli-file', 'blank env falls through to the CLI config')
+    assert.equal(tf.resolveTinyfishKey('from-config', { TINYFISH_API_KEY: 'from-env' }, home), 'from-config')
+
+    // A malformed or non-object file is "no key", never a crash.
+    fs.writeFileSync(path.join(home, '.tinyfish', 'config.json'), '{not json')
+    assert.equal(tf.readCliApiKey(home), '')
+    fs.writeFileSync(path.join(home, '.tinyfish', 'config.json'), '[]')
+    assert.equal(tf.readCliApiKey(home), '')
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+  }
 })
 
 /* ------------------------------------------------ anysearch transport layer */
@@ -885,7 +910,12 @@ await check('the plugin registers exactly ONE provider for both capabilities', a
   // so an unset `web.searchProvider` is unambiguous and the operator never has
   // to name a backend to get search working. Backend choice stays internal.
   const runtime = await mountWeb()
-  const provider = chain()
+  // An explicit key makes TinyFish definitively available, so which backend
+  // serves does not depend on whether THIS machine happens to have a
+  // `~/.tinyfish/config.json`. Without it the test is non-hermetic: on a clean
+  // runner TinyFish is unavailable and the chain serves from AnySearch against a
+  // TinyFish-shaped stub.
+  const provider = chain({ tinyfish: { apiKey: 'sk-test' } })
   runtime.registerSearchProvider(provider)
   runtime.registerFetchProvider(provider)
   assert.equal(runtime.searchProviders.size, 1, 'exactly one search provider must be registered')
