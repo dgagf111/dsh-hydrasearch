@@ -72,10 +72,9 @@
 
         tinyfish:
           enabled: true
-          # Leave empty to use $TINYFISH_API_KEY, then ~/.tinyfish/config.json
-          # (written by `tinyfish auth login`), then the credential-center ref.
-          apiKey: ''
-          apiKeyEnv: TINYFISH_API_KEY
+          # The API key is NOT configured here. It lives ONLY in the credential
+          # center, under the plugin-owned ref HYDRASEARCH_TINYFISH_API_KEY,
+          # written from the settings card. Environment variables are not read.
           searchBaseURL: https://api.search.tinyfish.ai/
           fetchBaseURL: https://api.fetch.tinyfish.ai/
           purpose: ''
@@ -101,10 +100,9 @@
 
         anysearch:
           enabled: true
-          # Leave empty for anonymous access (lower quota), or set a key here /
-          # in $ANYSEARCH_API_KEY / in the skill's .env file.
-          apiKey: ''
-          apiKeyEnv: ANYSEARCH_API_KEY
+          # As with tinyfish: the key lives only in the credential center, under
+          # HYDRASEARCH_ANYSEARCH_API_KEY. An empty key is legal — AnySearch
+          # allows anonymous access at a lower quota.
           # Empty uses $ANYSEARCH_API_BASE_URL, then the public host.
           baseURL: ''
           # Vertical sub-domain tag (e.g. finance.quote); blank = general web search.

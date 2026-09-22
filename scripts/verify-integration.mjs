@@ -52,21 +52,19 @@ async function check(name, fn) {
 console.log('dsh-hydrasearch in-process integration\n')
 
 /*
- * Isolate from ambient credential environment variables.
+ * Ambient credential environment variables can no longer interfere.
  *
- * The real `LocalCredentialProvider` treats an environment variable as a
- * READ-ONLY source and refuses `set` while one shadows the reference — correct
- * behaviour, but it makes the credential round-trip assertions depend on how
- * this script was launched. Clearing the two names under test keeps the suite
- * deterministic; they are restored on exit.
+ * The plugin reads plugin-owned references (`HYDRASEARCH_*`), which no launcher
+ * exports, so the old shadowing hazard is gone by construction. The plain
+ * `TINYFISH_API_KEY` / `ANYSEARCH_API_KEY` names are still cleared below to
+ * prove that: a test asserting the key comes from the credential center must
+ * fail if the plugin secretly consulted the environment.
  */
-const SAVED_ENV = new Map()
 for (const name of ['TINYFISH_API_KEY', 'ANYSEARCH_API_KEY']) {
-  if (process.env[name] !== undefined) SAVED_ENV.set(name, process.env[name])
-  delete process.env[name]
+  process.env[name] = 'sk-from-env-must-be-ignored'
 }
 process.on('exit', () => {
-  for (const [name, value] of SAVED_ENV) process.env[name] = value
+  for (const name of ['TINYFISH_API_KEY', 'ANYSEARCH_API_KEY']) delete process.env[name]
 })
 
 /* ---------------------------------------------------------- fetch double */
@@ -150,6 +148,11 @@ const scratchDirs = [scratch]
  * Mount a real context with the services the plugin injects, then run the
  * plugin's own `apply()`.
  *
+ * Keys are NOT config any more: they are written into the real mounted
+ * credential center under the plugin's own references, which is exactly how the
+ * settings card writes them. `config.tinyfish.apiKey` / `config.anysearch.apiKey`
+ * are accepted as conveniences for the call sites below and translated here.
+ *
  * @param config - composition entry config (the plugin fills the rest).
  * @param options - `fresh: true` gives this mount its own settings file, so a
  *   priority reordered by an earlier mount cannot leak in. (That leak is the
@@ -171,9 +174,22 @@ async function mount(config = {}, options = {}) {
   await ctx.plugin(SystemPrompt, {})
   await ctx.plugin(FileSettingsProvider, { path: docPath })
   await ctx.plugin(LocalCredentialProvider, { path: credPath })
+  // Move any test-supplied key into the credential center, the one store the
+  // plugin reads, then strip it from the config so a schema field cannot
+  // silently reintroduce a second source.
+  const credentials = ctx.get('credentials')
+  const sanitized = structuredClone(config)
+  for (const [id, ref] of [[plugin.TINYFISH_ID, plugin.TINYFISH_API_KEY_REF], [plugin.ANYSEARCH_ID, plugin.ANYSEARCH_API_KEY_REF]]) {
+    const key = sanitized[id]?.apiKey
+    if (sanitized[id] !== undefined) delete sanitized[id].apiKey
+    if (typeof key === 'string' && key.length > 0) await credentials.set(ref, key)
+  }
   // `apply` expects the schema-resolved config, exactly as the loader passes it.
-  const resolved = plugin.Config(config)
+  const resolved = plugin.Config(sanitized)
   plugin.apply(ctx, resolved)
+  // Hydrate the availability snapshot the way production does before deciding
+  // which backends can serve.
+  await plugin.keyStoreFor(ctx).refresh()
   return ctx
 }
 
@@ -263,6 +279,10 @@ async function bridge(route, body) {
     probeBackend: async () => ({}),
     subDomains: async () => ({}),
     adoptKey: async () => ({}),
+    // The real bridge refreshes the availability snapshot after a durable
+    // credential write; the double must too, or key-set/key-unset assertions
+    // would not observe the production behaviour.
+    refreshKeys: async () => { await plugin.keyStoreFor(ctx).refresh() },
   })
   const handler = routes.find((entry) => entry.path === `${plugin.BRIDGE_PREFIX}${route}`)
   assert.ok(handler !== undefined, `no bridge route ${route}`)
@@ -286,15 +306,24 @@ function readConfigured() {
 await check('the settings namespace is registered and readable', () => {
   const value = readConfigured()
   assert.deepEqual(value.priority, ['tinyfish', 'anysearch'], 'the namespace must resolve the composition defaults')
-  assert.equal(value.tinyfish.apiKey, 'sk-tinyfish-it')
+  // The key is NOT in settings any more — that is the point of the single-store
+  // contract. It lives only in the credential center.
+  assert.equal(value.tinyfish.apiKey, undefined, 'config must expose no key field')
+  assert.equal(value.tinyfish.apiKeyEnv, undefined, 'config must expose no key-ref field')
 })
 
 await check('describe reports the live chain and both credential slots', async () => {
   const reply = await bridge('/describe', {})
   assert.equal(reply.ok, true, `describe failed: ${reply.message}`)
   assert.deepEqual(reply.value.chain.priority, ['tinyfish', 'anysearch'])
-  assert.equal(reply.value.credentials.tinyfish.ref, 'TINYFISH_API_KEY')
-  assert.equal(reply.value.credentials.anysearch.ref, 'ANYSEARCH_API_KEY')
+  assert.equal(reply.value.credentials.tinyfish.ref, plugin.TINYFISH_API_KEY_REF)
+  assert.equal(reply.value.credentials.anysearch.ref, plugin.ANYSEARCH_API_KEY_REF)
+  // The key seeded by mount() is visible through the credential center with the
+  // layer named, so the card can say where it came from and whether it is
+  // replaceable.
+  assert.equal(reply.value.credentials.tinyfish.configured, true)
+  assert.equal(reply.value.credentials.tinyfish.source, 'file')
+  assert.equal(reply.value.credentials.tinyfish.writable, true)
 })
 
 await check('a settings write persists to disk and is re-read immediately', async () => {
@@ -367,14 +396,33 @@ await check('invalid settings are refused with an actionable message', async () 
 
 await check('the credential center round trip supplies the key the provider sends', async () => {
   const credentials = ctx.get('credentials')
-  await credentials.set('ANYSEARCH_API_KEY', 'as_sk_from_center')
+  await credentials.set(plugin.ANYSEARCH_API_KEY_REF, 'as_sk_from_center')
+  // Refresh the availability snapshot the way the bridge does after a write, so
+  // the synchronous `available()` sees the new key immediately.
+  await plugin.keyStoreFor(ctx).refresh()
 
-  // The credential-center ref outranks the configured key, so the next request
-  // must carry the newly stored value.
+  // The credential center is the ONLY key source, so the next request must
+  // carry the newly stored value.
   await ctx.web.search({ query: 'credential check', maxResults: 2 })
   const call = fetchCalls.at(-1)
   assert.equal(call.url.hostname, 'api.anysearch.com')
   assert.equal(call.headers.authorization, 'Bearer as_sk_from_center')
+})
+
+await check('an environment variable is NOT a key source', async () => {
+  // The suite exports plausible-looking `TINYFISH_API_KEY` / `ANYSEARCH_API_KEY`
+  // values at startup. Reading one would defeat the single-store contract, so a
+  // cleared credential center must leave TinyFish unavailable regardless.
+  const credentials = ctx.get('credentials')
+  await credentials.unset(plugin.TINYFISH_API_KEY_REF)
+  await plugin.keyStoreFor(ctx).refresh()
+  const reply = await bridge('/describe', {})
+  assert.equal(reply.value.credentials.tinyfish.configured, false, 'the environment must not configure the key')
+  // And a direct search proves the request would not carry it either.
+  const before = fetchCalls.length
+  await ctx.web.search({ query: 'no key', maxResults: 1 })
+  const hosts = fetchCalls.slice(before).map((call) => call.url.hostname)
+  assert.ok(!hosts.includes('api.search.tinyfish.ai'), 'TinyFish must not be called without a credential')
 })
 
 await check('the bridge reports the credential center as configured', async () => {
@@ -386,15 +434,45 @@ await check('the bridge reports the credential center as configured', async () =
 await check('a key set through the bridge lands in the credential center', async () => {
   const reply = await bridge('/key-set', { backend: 'tinyfish', value: 'sk-tinyfish-from-card' })
   assert.equal(reply.ok, true, `key-set failed: ${reply.message}`)
-  const stored = await ctx.get('credentials').resolve('TINYFISH_API_KEY')
+  const stored = await ctx.get('credentials').resolve(plugin.TINYFISH_API_KEY_REF)
   assert.equal(stored?.value, 'sk-tinyfish-from-card')
+  // The write must be live for the very next availability test, with no restart
+  // and no wait for an event.
+  assert.equal(plugin.keyStoreFor(ctx).get(plugin.TINYFISH_API_KEY_REF), 'sk-tinyfish-from-card')
 })
 
-await check('a key unset through the bridge removes it', async () => {
+await check('a key unset through the bridge removes it and says so', async () => {
   const reply = await bridge('/key-unset', { backend: 'tinyfish' })
   assert.equal(reply.ok, true, `key-unset failed: ${reply.message}`)
-  const stored = await ctx.get('credentials').resolve('TINYFISH_API_KEY')
+  assert.equal(reply.value.cleared, true, 'a clear the store actually honoured must be reported as cleared')
+  const stored = await ctx.get('credentials').resolve(plugin.TINYFISH_API_KEY_REF)
   assert.equal(stored, undefined)
+  // The clear must take effect immediately, not on the next resolution.
+  assert.equal(plugin.keyStoreFor(ctx).get(plugin.TINYFISH_API_KEY_REF), '')
+})
+
+await check('a clear shadowed by a read-only layer is reported honestly, not as success', async () => {
+  // Simulate the exact production trap: the credentials provider resolves the
+  // reference from a read-only layer that outranks its writable document.
+  // `unset` cannot remove that layer, so reporting "cleared" would be a lie —
+  // the very lie that made a configured key feel stuck.
+  const shadowedRef = plugin.ANYSEARCH_API_KEY_REF
+  const realCredentials = ctx.get('credentials')
+  const originalUnset = realCredentials.unset.bind(realCredentials)
+  const originalDescribe = realCredentials.describe.bind(realCredentials)
+  realCredentials.unset = async () => { /* durable clear succeeds; layer remains */ }
+  realCredentials.describe = async (ref) => (ref === shadowedRef
+    ? { configured: true, writable: false, source: 'env' }
+    : originalDescribe(ref))
+  try {
+    const reply = await bridge('/key-unset', { backend: 'anysearch' })
+    assert.equal(reply.ok, true)
+    assert.equal(reply.value.cleared, false, 'a still-resolving key must NOT be reported as cleared')
+    assert.equal(reply.value.shadowedBy, 'env', 'the reply must name the layer still supplying the key')
+  } finally {
+    realCredentials.unset = originalUnset
+    realCredentials.describe = originalDescribe
+  }
 })
 
 /* ----------------------------------------------------- failover on a real context */

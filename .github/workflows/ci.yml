@@ -86,6 +86,12 @@ jobs:
         # proves the plugin works against the actual seam rather than a stub.
         run: node scripts/verify-integration.mjs
 
+      - name: End-to-end regression proof
+        # Reproduces the two reported failures on a scratch home — including the
+        # exported `TINYFISH_API_KEY` that made a saved key unreachable and
+        # unclearable — and asserts both are fixed.
+        run: node scripts/verify-e2e.mjs
+
       - name: Shipped modules parse, and the manifest is self-consistent
         # `verify-profile.mjs` composes a live PROFILE, which CI has no access to,
         # so it cannot run here. What CI can still prove is that every shipped
@@ -98,6 +104,7 @@ jobs:
           node --check lib/anysearch.js
           node --check lib/client.js
           node --check scripts/deploy.mjs
+          node --check scripts/verify-e2e.mjs
           echo "all shipped modules parse"
 
           node -e '

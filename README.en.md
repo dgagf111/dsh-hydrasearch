@@ -68,14 +68,17 @@ Restart DeepSeek Harness, then open **Plugins page → Installed → `dsh-hydras
 >
 > Why a bundle install is mandatory, and why symlinks fail — see the [integration notes](./docs/integration-notes.md).
 
-### Credentials (optional but recommended)
+### Credentials (TinyFish required, AnySearch optional)
 
-TinyFish requires a key; AnySearch works anonymously at a lower quota. Either way:
+**The API key lives in exactly ONE place: the credential center** (`~/.dsh/.credentials.yaml`). Click "Save to credential center" in the card; it takes effect on the **next request, with no restart**.
 
 ```powershell
-tinyfish auth login          # writes ~/.tinyfish/config.json
-# or enter it directly in the plugin card, which stores it in the credential center ~/.dsh/.credentials.yaml
+# Plugins page → 已安装 → dsh-hydrasearch → the row's configure control → paste the key → Save to credential center
 ```
+
+TinyFish requires a key; AnySearch works anonymously at a lower quota.
+
+> Environment variables (`TINYFISH_API_KEY` / `ANYSEARCH_API_KEY`), `~/.tinyfish/config.json`, and the skill's `.env` are **no longer key sources** — the plugin reads, writes, and clears through the credential center alone. That is what makes Clear actually clear.
 
 ---
 
@@ -125,8 +128,6 @@ Every field is persisted in the `hydrasearch` settings namespace. Each field is 
 | Field | Default | API parameter |
 | --- | --- | --- |
 | `enabled` | `true` | — |
-| `apiKey` | `''` | `X-API-Key`; empty falls back to env / CLI config |
-| `apiKeyEnv` | `TINYFISH_API_KEY` | Credential-center reference name |
 | `searchBaseURL` | `https://api.search.tinyfish.ai/` | Search endpoint |
 | `fetchBaseURL` | `https://api.fetch.tinyfish.ai/` | Fetch endpoint |
 | `purpose` | `''` | `purpose` intent hint |
@@ -150,8 +151,6 @@ Every field is persisted in the `hydrasearch` settings namespace. Each field is 
 | Field | Default | API parameter |
 | --- | --- | --- |
 | `enabled` | `true` | — |
-| `apiKey` | `''` | `Authorization: Bearer`; **empty means anonymous access** |
-| `apiKeyEnv` | `ANYSEARCH_API_KEY` | Credential-center reference name |
 | `baseURL` | `''` | API base; empty uses the public endpoint |
 | `tag` | `''` | `tag` vertical sub-domain (e.g. `finance.quote`); empty = general web search |
 | `params` | `''` | `params` vertical parameters (JSON object string); requires `tag` |
@@ -166,16 +165,24 @@ The write path validates that endpoints are absolute URLs, `maxPages` is 1–10,
 
 ## API keys
 
-Both backends resolve in this order: **plugin config → environment variable → local file → credential center**
+**One store only — the credential center** — with read, write, and clear aligned on it:
 
-- TinyFish: `TINYFISH_API_KEY` env → `~/.tinyfish/config.json` (written by `tinyfish auth login`)
-- AnySearch: `ANYSEARCH_API_KEY` env → `~/.agents/skills/anysearch/.env`
+| Operation | Target |
+| --- | --- |
+| Read (per request, never cached) | `ctx.credentials.resolve(ref)` |
+| Write (card's "Save to credential center") | the same ref |
+| Clear (card's "Clear") | the same ref |
 
-You can also use "write to credential center" in the card (`~/.dsh/.credentials.yaml`). Keys are **read per call and never cached**, so saving one takes effect on the **next request without a restart**.
+The references are plugin-owned, and **deliberately not** named after the conventional environment variables:
 
-> **Note**: if you `export`ed the key in a shell and started dsh from it, the credential center **refuses the write** and reports
-> `"... is supplied read-only by the launching environment, so set would be shadowed; unset it in the shell you start dsh from instead"`.
-> That protection is correct — otherwise the write would "succeed" while still being shadowed by the environment variable. Unset it in the shell first if you want the credential center to own the key.
+- TinyFish: `HYDRASEARCH_TINYFISH_API_KEY`
+- AnySearch: `HYDRASEARCH_ANYSEARCH_API_KEY`
+
+> **Why rename them**: once a credential reference shares its name with a common environment variable, that ref is permanently **shadowed** on any machine that exports one. The credential center then **refuses** writes to a shadowed ref on purpose — a write that resolution ignores is worse than an error — leaving the card unable to store *or* clear the key. A plugin-owned name removes that deadlock entirely.
+
+The card's badge names which layer inside the credential center supplies the key (local file / environment layer / `.env` layer). When that layer is read-only, "Clear" says so honestly — "removed from the writable store, but a read-only layer still supplies it" — instead of pretending to have succeeded.
+
+> With no key, TinyFish is skipped by the chain (`skipped-unavailable`, never attempted) and the search falls through to AnySearch.
 
 ---
 

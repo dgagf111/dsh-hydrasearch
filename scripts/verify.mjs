@@ -327,33 +327,19 @@ await check('a base URL without a trailing slash still hits the root path', asyn
   assert.equal(new URL(fetchImpl.calls[0].url).pathname, '/')
 })
 
-await check('resolveTinyfishKey honours config, then env, then the CLI config', () => {
-  assert.equal(tf.resolveTinyfishKey('  from-config  ', {}), 'from-config')
-  assert.equal(tf.resolveTinyfishKey('', { TINYFISH_API_KEY: 'from-env' }), 'from-env')
-  // The CLI-config fallback is asserted against a SCRATCH home, never the real
-  // one. Reading `os.homedir()` here made this check pass only on a machine
-  // that had run `tinyfish auth login`, and fail on a clean CI runner — the
-  // test has to create the condition it asserts on.
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'hydrasearch-home-'))
-  try {
-    assert.equal(tf.readCliApiKey(home), '', 'an absent CLI config means no key, not an error')
-    assert.equal(tf.resolveTinyfishKey('', { TINYFISH_API_KEY: '  ' }, home), '', 'blank env with no CLI config resolves to empty')
-
-    fs.mkdirSync(path.join(home, '.tinyfish'), { recursive: true })
-    fs.writeFileSync(path.join(home, '.tinyfish', 'config.json'), JSON.stringify({ api_key: 'from-cli-file' }))
-    assert.equal(tf.readCliApiKey(home), 'from-cli-file')
-    // Precedence, now provable end to end: config beats env beats the file.
-    assert.equal(tf.resolveTinyfishKey('', { TINYFISH_API_KEY: '  ' }, home), 'from-cli-file', 'blank env falls through to the CLI config')
-    assert.equal(tf.resolveTinyfishKey('from-config', { TINYFISH_API_KEY: 'from-env' }, home), 'from-config')
-
-    // A malformed or non-object file is "no key", never a crash.
-    fs.writeFileSync(path.join(home, '.tinyfish', 'config.json'), '{not json')
-    assert.equal(tf.readCliApiKey(home), '')
-    fs.writeFileSync(path.join(home, '.tinyfish', 'config.json'), '[]')
-    assert.equal(tf.readCliApiKey(home), '')
-  } finally {
-    fs.rmSync(home, { recursive: true, force: true })
-  }
+await check('the tinyfish transport exposes no key source of its own', () => {
+  // The key is SUPPLIED BY THE CALLER (resolved from the credential center).
+  // A second key source inside the transport is exactly what let the settings
+  // card report a key it could neither replace nor clear, so the absence of
+  // these helpers is a contract, not an oversight.
+  assert.equal(tf.resolveTinyfishKey, undefined, 'no env/config/CLI key resolution may exist')
+  assert.equal(tf.readCliApiKey, undefined, 'the CLI config must not be a key source')
+  // The environment variable NAME is still exported, for diagnostics only.
+  assert.equal(tf.TINYFISH_API_KEY_ENV, 'TINYFISH_API_KEY')
+  assert.equal(tf.TINYFISH_API_KEY_REF, 'HYDRASEARCH_TINYFISH_API_KEY')
+  // The ref must NOT collide with the conventional environment variable: a
+  // collision is what makes the credential provider refuse writes as shadowed.
+  assert.notEqual(tf.TINYFISH_API_KEY_REF, tf.TINYFISH_API_KEY_ENV)
 })
 
 /* ------------------------------------------------ anysearch transport layer */
@@ -510,10 +496,15 @@ await check('anysearch base URL resolution honours config then env then default'
   assert.equal(as.resolveAnysearchBase('', {}), as.ANYSEARCH_BASE_URL)
 })
 
-await check('anysearch key resolution honours config then env then the skill .env', () => {
-  assert.equal(as.resolveAnysearchKey('  from-config ', {}), 'from-config')
-  assert.equal(as.resolveAnysearchKey('', { ANYSEARCH_API_KEY: 'from-env' }), 'from-env')
-  assert.equal(typeof as.resolveAnysearchKey('', {}), 'string')
+await check('the anysearch transport exposes no key source of its own', () => {
+  // Same contract as tinyfish: the caller resolves the key from the credential
+  // center, so the transport holds no env/.env fallback of its own.
+  assert.equal(as.resolveAnysearchKey, undefined, 'no env/.env key resolution may exist')
+  assert.equal(as.readSkillEnvKey, undefined, 'the skill .env must not be a key source')
+  assert.equal(as.writeSkillEnvKey, undefined, 'the skill .env must not be a write target')
+  assert.equal(as.ANYSEARCH_API_KEY_ENV, 'ANYSEARCH_API_KEY')
+  assert.equal(as.ANYSEARCH_API_KEY_REF, 'HYDRASEARCH_ANYSEARCH_API_KEY')
+  assert.notEqual(as.ANYSEARCH_API_KEY_REF, as.ANYSEARCH_API_KEY_ENV)
 })
 
 await check('anysearch maps a transport failure and cancellation distinctly', async () => {
@@ -552,28 +543,91 @@ function cfg(overrides = {}) {
   return plugin.Config(overrides)
 }
 
-/** A context double with no credential center. */
-const noCreds = { get: () => undefined }
+/* ------------------------------------------- credential-center test double */
 
 /**
- * Build one backend runtime for `id` over a config thunk.
+ * The credential store the backend doubles read. Seeded by {@link seedKeys}.
+ *
+ * The plugin reads an API key ONLY from the credential center — there is no
+ * config, environment, or CLI fallback any more — so tests seed keys HERE
+ * instead of in config. The config no longer has any key field at all.
+ */
+const testCredentials = new Map()
+
+/** A `ctx.credentials` double over {@link testCredentials}. */
+const credentialsDouble = {
+  resolve: async (ref) => {
+    const value = testCredentials.get(ref)
+    return value === undefined || value.length === 0 ? undefined : { value, source: 'file' }
+  },
+  describe: async (ref) => (testCredentials.has(ref)
+    ? { configured: true, writable: true, source: 'file' }
+    : { configured: false, writable: true }),
+  set: async (ref, value) => { testCredentials.set(ref, value) },
+  unset: async (ref) => { testCredentials.delete(ref) },
+}
+
+/** A context double exposing only the credential center above. */
+const credCtx = { get: (name) => (name === 'credentials' ? credentialsDouble : undefined) }
+
+/**
+ * Seed the credential center for both backends, then prime the synchronous
+ * snapshot `available()` reads — the same snapshot production hydrates from the
+ * real service. `undefined` means "no key for this backend".
+ *
+ * @param keys - `{ tinyfish?, anysearch? }` key strings.
+ */
+function seedKeys({ tinyfish, anysearch } = {}) {
+  testCredentials.clear()
+  if (typeof tinyfish === 'string') testCredentials.set(plugin.TINYFISH_API_KEY_REF, tinyfish)
+  if (typeof anysearch === 'string') testCredentials.set(plugin.ANYSEARCH_API_KEY_REF, anysearch)
+  plugin.keyStoreFor(credCtx).prime({
+    [plugin.TINYFISH_API_KEY_REF]: typeof tinyfish === 'string' ? tinyfish : '',
+    [plugin.ANYSEARCH_API_KEY_REF]: typeof anysearch === 'string' ? anysearch : '',
+  })
+}
+
+/**
+ * Seed the credential center from a config-override bag's `apiKey` entries,
+ * then prime the synchronous snapshot `available()` reads.
+ *
+ * Tests keep expressing intent as `tinyfish: { apiKey: 'sk-test' }` — the key
+ * simply travels to the credential center instead of into config, because the
+ * plugin no longer HAS a config key field. A backend whose `apiKey` is absent or
+ * blank gets no key, which keeps every check hermetic (no ambient env or CLI
+ * key can leak in and flip a result).
+ *
+ * @param overrides - the same override bag handed to {@link chain}/{@link backend}.
+ */
+function seedFromOverrides(overrides = {}) {
+  seedKeys({
+    tinyfish: typeof overrides.tinyfish?.apiKey === 'string' ? overrides.tinyfish.apiKey : '',
+    anysearch: typeof overrides.anysearch?.apiKey === 'string' ? overrides.anysearch.apiKey : '',
+  })
+}
+
+/**
+ * Build one backend runtime for `id` over a config thunk. Keys come from the
+ * credential double seeded by {@link seedFromOverrides}.
  * @param id - backend id.
  * @param overrides - config overrides (nested under the backend's own key).
  * @param base - the full config to start from.
  */
 function backend(id, overrides = {}, base = {}) {
   const resolved = cfg({ ...base, [id]: { ...(base[id] ?? {}), ...overrides } })
-  return new plugin.BackendRuntime(id, noCreds, () => resolved, undefined)
+  seedFromOverrides({ [id]: overrides })
+  return new plugin.BackendRuntime(id, credCtx, () => resolved, undefined)
 }
 
 /** Build the failover-chain provider over a config. */
 function chain(overrides = {}) {
   const resolved = cfg(overrides)
+  seedFromOverrides(overrides)
   const byId = {
-    [plugin.TINYFISH_ID]: new plugin.BackendRuntime(plugin.TINYFISH_ID, noCreds, () => resolved, undefined),
-    [plugin.ANYSEARCH_ID]: new plugin.BackendRuntime(plugin.ANYSEARCH_ID, noCreds, () => resolved, undefined),
+    [plugin.TINYFISH_ID]: new plugin.BackendRuntime(plugin.TINYFISH_ID, credCtx, () => resolved, undefined),
+    [plugin.ANYSEARCH_ID]: new plugin.BackendRuntime(plugin.ANYSEARCH_ID, credCtx, () => resolved, undefined),
   }
-  return new plugin.HydraSearchProvider(noCreds, () => resolved, undefined, (id) => byId[id])
+  return new plugin.HydraSearchProvider(credCtx, () => resolved, undefined, (id) => byId[id])
 }
 
 await check('provider ids and exported constants are stable', () => {
@@ -603,14 +657,20 @@ await check('the two built-in fetch formats and domains match the APIs', () => {
   assert.equal(as.ANYSEARCH_MAX_RESULTS, 10)
 })
 
-await check('available() is false for tinyfish without any key source', () => {
+await check('available() is false for tinyfish without a credential-center key', () => {
+  // No env/CLI fallback exists any more, so "no key in the credential center"
+  // is unconditionally unavailable — this check is now fully hermetic instead
+  // of depending on whether the developer had run `tinyfish auth login`.
+  seedKeys({ tinyfish: undefined, anysearch: undefined })
+  assert.equal(backend('tinyfish').available(), false)
+  // The environment variable must NOT resurrect it: the plugin reads one store.
   const saved = process.env.TINYFISH_API_KEY
-  delete process.env.TINYFISH_API_KEY
+  process.env.TINYFISH_API_KEY = 'sk-from-env-should-be-ignored'
   try {
-    // A CLI config key on this machine would legitimately make it available.
-    if (tf.resolveTinyfishKey('').length === 0) assert.equal(backend('tinyfish').available(), false)
+    assert.equal(backend('tinyfish').available(), false, 'the environment is not a key source')
   } finally {
-    if (saved !== undefined) process.env.TINYFISH_API_KEY = saved
+    if (saved === undefined) delete process.env.TINYFISH_API_KEY
+    else process.env.TINYFISH_API_KEY = saved
   }
 })
 
@@ -774,12 +834,11 @@ await check('a skipped backend is reported as NOT tried, distinctly from a failu
   // The honesty rule: "never attempted" and "attempted and failed" must not be
   // collapsed, because only the second is evidence the backend is broken.
   const original = globalThis.fetch
-  const savedKey = process.env.TINYFISH_API_KEY
-  delete process.env.TINYFISH_API_KEY
   globalThis.fetch = stubFetch([envelope([asResult('https://as.test/1')])])
   try {
-    if (tf.resolveTinyfishKey('').length > 0) return // a CLI key exists; branch untestable
-    const out = await chain({ priority: ['tinyfish', 'anysearch'], tinyfish: { apiKey: '' }, anysearch: { apiKey: 'k' } })
+    // Seed ONLY anysearch: tinyfish has no credential, so the chain must skip
+    // it without spending a request.
+    const out = await chain({ priority: ['tinyfish', 'anysearch'], anysearch: { apiKey: 'k' } })
       .search({ query: 'q', maxResults: 5 })
     assert.equal(out.sources[0].url, 'https://as.test/1')
     assert.match(out.content, /tinyfish was not available/)
@@ -787,7 +846,6 @@ await check('a skipped backend is reported as NOT tried, distinctly from a failu
     assert.doesNotMatch(out.content, /tinyfish failed/)
   } finally {
     globalThis.fetch = original
-    if (savedKey !== undefined) process.env.TINYFISH_API_KEY = savedKey
   }
 })
 
@@ -883,26 +941,19 @@ await check('a failover fetch carries the note into the body text', async () => 
 })
 
 await check('the chain reports unavailable when no backend can run', async () => {
-  const savedKey = process.env.TINYFISH_API_KEY
-  const savedAs = process.env.ANYSEARCH_API_KEY
-  delete process.env.TINYFISH_API_KEY
-  delete process.env.ANYSEARCH_API_KEY
-  try {
-    if (tf.resolveTinyfishKey('').length > 0 || as.resolveAnysearchKey('').length > 0) return
-    const provider = chain({
-      priority: ['tinyfish', 'anysearch'],
-      tinyfish: { apiKey: '', enabled: false },
-      anysearch: { enabled: false },
-    })
-    assert.equal(provider.available(), false)
-    await assert.rejects(
-      () => provider.search({ query: 'q' }),
-      (error) => error.code === 'WEB_PROVIDER_UNAVAILABLE',
-    )
-  } finally {
-    if (savedKey !== undefined) process.env.TINYFISH_API_KEY = savedKey
-    if (savedAs !== undefined) process.env.ANYSEARCH_API_KEY = savedAs
-  }
+  // No key and both backends disabled: nothing can serve, and the chain must say
+  // so rather than pretending a backend is usable. Fully hermetic now — the
+  // environment cannot supply a key even if one is exported.
+  const provider = chain({
+    priority: ['tinyfish', 'anysearch'],
+    tinyfish: { enabled: false },
+    anysearch: { enabled: false },
+  })
+  assert.equal(provider.available(), false)
+  await assert.rejects(
+    () => provider.search({ query: 'q' }),
+    (error) => error.code === 'WEB_PROVIDER_UNAVAILABLE',
+  )
 })
 
 await check('the plugin registers exactly ONE provider for both capabilities', async () => {
@@ -1102,9 +1153,19 @@ await check('describe reports the chain, both credential slots, and the limits',
   assert.equal(reply.value.chain.providerId, 'hydrasearch')
   assert.deepEqual(reply.value.chain.priority, ['tinyfish', 'anysearch'])
   assert.deepEqual(reply.value.chain.backends, ['tinyfish', 'anysearch'])
-  assert.equal(reply.value.credentials.tinyfish.ref, 'TINYFISH_API_KEY')
-  assert.equal(reply.value.credentials.anysearch.ref, 'ANYSEARCH_API_KEY')
+  assert.equal(reply.value.credentials.tinyfish.ref, plugin.TINYFISH_API_KEY_REF)
+  assert.equal(reply.value.credentials.anysearch.ref, plugin.ANYSEARCH_API_KEY_REF)
+  // The refs are plugin-owned on purpose: a ref that collided with the
+  // conventional environment variable would be permanently shadowed, which is
+  // what made the card unable to write or clear the key.
+  assert.notEqual(reply.value.credentials.tinyfish.ref, 'TINYFISH_API_KEY')
+  assert.notEqual(reply.value.credentials.anysearch.ref, 'ANYSEARCH_API_KEY')
   assert.equal(reply.value.env.anysearch.anonymousAllowed, true)
+  // `fromConfig` and `hasFallbackKey` are gone: config and environment are no
+  // longer key sources, so reporting them would describe a store the plugin
+  // does not read.
+  assert.equal(reply.value.credentials.tinyfish.fromConfig, undefined)
+  assert.equal(reply.value.env.tinyfish.hasFallbackKey, undefined)
   assert.equal(reply.value.limits.tinyfish.defaultMaxPages, 3)
   assert.equal(reply.value.limits.anysearch.maxResults, 10)
   assert.equal(reply.value.limits.tinyfish.fetchFormats.includes('markdown'), true)
@@ -1190,6 +1251,55 @@ await check('the mutate route refuses a foreign namespace', async () => {
   assert.equal(reply.ok, false)
 })
 
+await check('the test route carries latencyMs for both a single backend and the chain', async () => {
+  // REGRESSION: the card renders "耗时 {latencyMs}ms", and the /test route's
+  // probe objects were built by hand without copying `latencyMs` off the
+  // backend result — so every completed test printed "耗时 undefinedms".
+  //
+  // Asserted through the REAL handler and the REAL backend result shape (not a
+  // hand-written stub reply), so a future field drop is caught here rather than
+  // in the browser.
+  const original = globalThis.fetch
+  globalThis.fetch = stubFetch([
+    page([result('https://a.test/1')]),
+    envelope([asResult('https://as.test/1')]),
+  ])
+  try {
+    // The probe helpers live in apply(), so drive the same BackendRuntime the
+    // chain does and assert the result the route projects from it.
+    seedKeys({ tinyfish: 'sk-test', anysearch: 'k' })
+    const out = await backend('tinyfish').search({ query: 'q', maxResults: 5 }, undefined)
+    assert.equal(typeof out.latencyMs, 'number', 'a backend search result must carry latencyMs')
+    assert.ok(out.latencyMs >= 0)
+
+    // And through the route: the reply the card consumes must expose it.
+    const routes = plugin.makeBridgeRoutes(bridgeDeps({
+      probeSearch: async () => ({ query: 'q', backend: 'tinyfish', sources: [], totalResults: 0, latencyMs: 42 }),
+      probeBackend: async () => ({ query: 'q', backend: 'tinyfish', sources: [], totalResults: 0, latencyMs: 42 }),
+    }))
+    const chainRoute = routes.find((entry) => entry.path.endsWith('/test'))
+    const chainReply = await invokeBridge(chainRoute, { body: {} })
+    assert.equal(chainReply.reply.value.latencyMs, 42, 'the chain test reply must expose latencyMs')
+    const singleReply = await invokeBridge(chainRoute, { body: { backend: 'tinyfish' } })
+    assert.equal(singleReply.reply.value.latencyMs, 42, 'the single-backend test reply must expose latencyMs')
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+await check('a probe failure never reports a latency', async () => {
+  // The card only reads `latencyMs` on success; a failure path must not invent
+  // a number, or "耗时 0ms" would read as a real measurement.
+  const routes = plugin.makeBridgeRoutes(bridgeDeps({
+    probeSearch: async () => { throw new Error('everything is down') },
+  }))
+  const route = routes.find((entry) => entry.path.endsWith('/test'))
+  const { reply } = await invokeBridge(route, { body: {} })
+  assert.equal(reply.ok, false)
+  assert.equal(reply.value, undefined)
+  assert.equal(reply.latencyMs, undefined)
+})
+
 await check('the backend-test route requires a known backend', async () => {
   const routes = plugin.makeBridgeRoutes(bridgeDeps())
   const route = routes.find((entry) => entry.path.endsWith('/backend-test'))
@@ -1257,8 +1367,14 @@ await check('a non-POST method is refused', async () => {
 
 /* ------------------------------------------------------------- live checks */
 
-const liveTinyfishKey = tf.resolveTinyfishKey('')
-const liveAnysearchKey = as.resolveAnysearchKey('')
+/**
+ * Live checks read the key from the CREDENTIAL CENTER, the only store the
+ * plugin uses. Without a mounted credentials service there is nothing to read,
+ * so the section self-skips rather than inventing a key source the plugin does
+ * not have.
+ */
+const liveTinyfishKey = (await credentialsDouble.resolve(plugin.TINYFISH_API_KEY_REF))?.value ?? ''
+const liveAnysearchKey = (await credentialsDouble.resolve(plugin.ANYSEARCH_API_KEY_REF))?.value ?? ''
 
 if (liveTinyfishKey.length === 0 && liveAnysearchKey.length === 0) {
   console.log('\nlive checks: SKIPPED (no TinyFish or AnySearch key found)')

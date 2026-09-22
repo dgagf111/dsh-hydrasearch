@@ -66,14 +66,17 @@ $node = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\nod
 >
 > 为什么必须作为 bundle 安装、为什么不能用 symlink——见 [集成笔记](./docs/integration-notes.md)。
 
-### 凭据（可选但推荐）
+### 凭据（TinyFish 必需，AnySearch 可选）
 
-TinyFish 需要 key，AnySearch 无 key 可用匿名档（额度较低）。两种方式：
+**API Key 只存一处：凭据中心**（`~/.dsh/.credentials.yaml`）。在卡片里点"写入凭据中心"即可，存完**下一次请求立即生效，无需重启**。
 
 ```powershell
-tinyfish auth login          # 写入 ~/.tinyfish/config.json
-# 或在插件卡片里直接填，会存进凭据中心 ~/.dsh/.credentials.yaml
+# 打开 插件页 → 已安装 → dsh-hydrasearch → 行内配置入口 → 填 key → 写入凭据中心
 ```
+
+TinyFish 需要 key；AnySearch 无 key 可用匿名档（额度较低）。
+
+> 环境变量（`TINYFISH_API_KEY` / `ANYSEARCH_API_KEY`）、`~/.tinyfish/config.json`、skill 的 `.env` **都不再是 key 来源**——插件读、写、清都只认凭据中心。这样"清除"才真的能把 key 清掉。
 
 ---
 
@@ -123,8 +126,6 @@ tinyfish auth login          # 写入 ~/.tinyfish/config.json
 | 字段 | 默认 | 对应 API 参数 |
 | --- | --- | --- |
 | `enabled` | `true` | — |
-| `apiKey` | `''` | `X-API-Key`；空则回退 env / CLI 配置 |
-| `apiKeyEnv` | `TINYFISH_API_KEY` | 凭据中心的引用名 |
 | `searchBaseURL` | `https://api.search.tinyfish.ai/` | 搜索端点 |
 | `fetchBaseURL` | `https://api.fetch.tinyfish.ai/` | 抓取端点 |
 | `purpose` | `''` | `purpose` 搜索意图提示 |
@@ -148,8 +149,6 @@ tinyfish auth login          # 写入 ~/.tinyfish/config.json
 | 字段 | 默认 | 对应 API 参数 |
 | --- | --- | --- |
 | `enabled` | `true` | — |
-| `apiKey` | `''` | `Authorization: Bearer`；**空则匿名访问** |
-| `apiKeyEnv` | `ANYSEARCH_API_KEY` | 凭据中心的引用名 |
 | `baseURL` | `''` | API 地址；空则用公共地址 |
 | `tag` | `''` | `tag` 垂直子域（如 `finance.quote`）；空=通用网页搜索 |
 | `params` | `''` | `params` 垂直参数（JSON 对象字符串）；需先填 `tag` |
@@ -164,16 +163,24 @@ tinyfish auth login          # 写入 ~/.tinyfish/config.json
 
 ## API Key 来源
 
-两个后端都是：**插件配置 → 环境变量 → 本地文件 → 凭据中心**
+**只有凭据中心一处**，读写清三者对齐：
 
-- TinyFish：`TINYFISH_API_KEY` env → `~/.tinyfish/config.json`（`tinyfish auth login` 写入）
-- AnySearch：`ANYSEARCH_API_KEY` env → `~/.agents/skills/anysearch/.env`
+| 动作 | 目标 |
+| --- | --- |
+| 读取（每次请求现读，不缓存） | `ctx.credentials.resolve(ref)` |
+| 写入（卡片"写入凭据中心"） | 同上 ref |
+| 清除（卡片"清除"） | 同上 ref |
 
-也可以在卡片里"写入凭据中心"（`~/.dsh/.credentials.yaml`）。key 是**每次调用现读**、不缓存的，所以存了 key **下一次请求立即生效，无需重启**。
+引用名由插件自己拥有，**故意不叫** `TINYFISH_API_KEY` / `ANYSEARCH_API_KEY`：
 
-> **注意**：如果是在 shell 里 `export` 了 key 然后启动 dsh 的，凭据中心会**拒绝写入**并报
-> `"... is supplied read-only by the launching environment, so set would be shadowed; unset it in the shell you start dsh from instead"`。
-> 这是正确的保护——否则写入会"看起来成功"但仍被环境变量遮蔽。想用凭据中心管理 key，先从 shell 里 unset。
+- TinyFish：`HYDRASEARCH_TINYFISH_API_KEY`
+- AnySearch：`HYDRASEARCH_ANYSEARCH_API_KEY`
+
+> **为什么要换名字**：凭据中心的引用名一旦和常见环境变量同名，任何 `export` 过它的机器上该 ref 都会被环境变量**永久遮蔽**；而凭据中心**故意拒绝**写入被遮蔽的 ref（"写入看似成功、解析仍返回被遮蔽值"比报错更糟）。结果就是卡片既存不进、也清不掉。改用插件自有名字后这个死结不存在了。
+
+卡片上的徽标会写明 key 来自凭据中心的哪一层（本地文件 / 环境变量层 / `.env` 层）。若某层是只读的，点"清除"会**如实告知**"已从可写存储删除，但仍有只读层在提供此 key"，而不是假装清除成功。
+
+> TinyFish 在无 key 时会被链路跳过（记 `skipped-unavailable`，不尝试），自动回退到 AnySearch。
 
 ---
 

@@ -6,9 +6,9 @@ node_modules/
 # into place) — never commit a half-written install.
 .staging/
 
-# Local secrets. The plugin resolves keys from the credential center, the
-# environment, `~/.tinyfish/config.json`, and the AnySearch skill's `.env`;
-# none of those may ever be tracked here.
+# Local secrets. The plugin stores API keys in the credential center
+# (`$DSH_HOME/.credentials.yaml`) and nowhere else; none of these may ever be
+# tracked here.
 .env
 .env.*
 !.env.example

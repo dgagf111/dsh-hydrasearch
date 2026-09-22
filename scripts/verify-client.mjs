@@ -214,12 +214,12 @@ function describeReply(overrides = {}) {
       providerIds: { search: 'hydrasearch', fetch: 'hydrasearch' },
       chain: { providerId: 'hydrasearch', priority: ['tinyfish', 'anysearch'], backends: ['tinyfish', 'anysearch'], failover: true, searchBackend: 'auto', fetchBackend: 'auto' },
       credentials: {
-        tinyfish: { ref: 'TINYFISH_API_KEY', envVar: 'TINYFISH_API_KEY', configured: false, writable: true, available: true, fromConfig: false },
-        anysearch: { ref: 'ANYSEARCH_API_KEY', envVar: 'ANYSEARCH_API_KEY', configured: false, writable: true, available: true, fromConfig: false },
+        tinyfish: { ref: 'HYDRASEARCH_TINYFISH_API_KEY', envVar: 'TINYFISH_API_KEY', configured: false, writable: true, available: true },
+        anysearch: { ref: 'HYDRASEARCH_ANYSEARCH_API_KEY', envVar: 'ANYSEARCH_API_KEY', configured: false, writable: true, available: true },
       },
       env: {
-        tinyfish: { envVar: 'TINYFISH_API_KEY', hasEnvKey: false, hasFallbackKey: true },
-        anysearch: { envVar: 'ANYSEARCH_API_KEY', hasEnvKey: false, hasFallbackKey: false, anonymousAllowed: true },
+        tinyfish: { envVar: 'TINYFISH_API_KEY', hasEnvKey: false },
+        anysearch: { envVar: 'ANYSEARCH_API_KEY', hasEnvKey: false, anonymousAllowed: true },
       },
       limits: {
         tinyfish: { pageSize: 10, defaultMaxPages: 3, maxPages: 10, domainTypes: ['web', 'news', 'research_paper'], fetchFormats: ['markdown', 'html', 'json'] },
@@ -357,6 +357,51 @@ await check('the credential routes carry the backend discriminator', () => {
 await check('the card surfaces an auto-registered AnySearch key for adoption', () => {
   assert.match(SOURCE, /\/key-adopt/, 'the minted key needs a persistence route')
   assert.match(SOURCE, /autoKey/, 'the minted key must be held in card state')
+})
+
+/* ------------------------------------------------- test-result rendering */
+
+await check('the test summary formats a real latency, never "undefined"', () => {
+  // REGRESSION: the /test route did not copy `latencyMs` off the backend result,
+  // so a COMPLETED test rendered "耗时 undefinedms". Two halves must hold:
+  // the copy table must survive a missing field, and the route must supply it.
+  // Formatting is asserted here by evaluating the same expression the card uses.
+  const copy = { testOk: (r) => '成功：' + r.backend + ' 返回 ' + r.sources.length + ' 条结果（共 ' + r.totalResults + ' 条匹配），耗时 ' + r.latencyMs + 'ms' }
+  const formatted = copy.testOk({ backend: 'tinyfish', sources: [1], totalResults: 1, latencyMs: 183 })
+  assert.match(formatted, /耗时 183ms/)
+  assert.doesNotMatch(formatted, /undefined/)
+  // And the guard: a reply missing latencyMs would still print "undefined", so
+  // the route-side assertion in verify.mjs is the other half of this contract.
+  assert.match(SOURCE, /latencyMs/, 'the card must read latencyMs from the reply')
+})
+
+await check('the key badge names the credential-center layer, not a config fallback', () => {
+  // REGRESSION: the badge showed "凭据中心已配置" whenever `configured` was true,
+  // even when the value came from a read-only environment layer — which made a
+  // key the card could not replace or clear look like an ordinary stored key.
+  assert.match(SOURCE, /keyFromEnvLayer/, 'the env layer needs its own label')
+  assert.match(SOURCE, /source === 'env'/, 'the badge must branch on the reported source')
+  // The removed "from the plugin config" / "falling back to env" labels must be
+  // gone: config and environment are no longer key sources at all.
+  assert.doesNotMatch(SOURCE, /keyFromConfig/, 'the plugin config is no longer a key source')
+  assert.doesNotMatch(SOURCE, /keyFallback/, 'there is no fallback to the environment/file')
+  assert.doesNotMatch(SOURCE, /hasFallback/, 'the fallback concept is gone')
+})
+
+await check('Clear is offered whenever a key exists and reports its outcome', () => {
+  // REGRESSION: Clear was disabled whenever `writable` was false, so a key
+  // supplied by a read-only layer could never be acted on from the card.
+  assert.match(SOURCE, /const clearKey = react\.useCallback/)
+  // The button must not be gated on `writable` any more: it renders whenever a
+  // key is configured, and its disabled state depends only on availability.
+  const clearButton = /className: 'dshhs-btn',\s*\n\s*\/\/[\s\S]*?children: t\.keyClear/.exec(SOURCE)
+  assert.ok(clearButton !== null, 'the Clear button must render when a key is configured')
+  assert.doesNotMatch(clearButton[0], /credential\.writable/, 'Clear must not be disabled by writability')
+  assert.match(clearButton[0], /disabled: busy !== null \|\| !credential\.available/, 'Clear depends on availability only')
+  // ...and the route's answer must be surfaced, so a shadowed clear is not
+  // reported as a success.
+  assert.match(SOURCE, /cleared === false/, 'a shadowed clear must be distinguished')
+  assert.match(SOURCE, /keyClearShadowed/, 'a shadowed clear needs its own message')
 })
 
 console.log(`\n${checks - failures}/${checks} checks passed`)

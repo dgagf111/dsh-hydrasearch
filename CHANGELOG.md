@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The "Test the chain" result reported `耗时 undefinedms`.** The `/test`
+  bridge route's probe objects are built by hand, and neither `singleProbe` nor
+  `chainProbe` copied `latencyMs` off the backend result — so every *successful*
+  test rendered `undefined` where the measured time belongs. Both probes now
+  carry it, and the field is covered through the real route handler.
+- **A configured TinyFish key could neither be replaced nor cleared.** The
+  credential-center reference was `TINYFISH_API_KEY` — the same name as the
+  conventional environment variable. On any machine that exports it, the
+  credential provider layers the launch environment ABOVE its writable document
+  and refuses `set`/`unset` for a shadowed reference (correctly: a write
+  resolution ignores is worse than an error). The card therefore failed the
+  save with `supplied read-only by the launching environment` and disabled Clear
+  outright, while the badge still claimed "configured in the credential center".
+  The references are now plugin-owned (`HYDRASEARCH_TINYFISH_API_KEY`,
+  `HYDRASEARCH_ANYSEARCH_API_KEY`), which cannot be shadowed by accident.
+- **Clear could report success while the key stayed in force.** `/key-unset` now
+  re-describes the reference after the durable clear and reports
+  `cleared: false` plus the layer still supplying it (`shadowedBy`), instead of
+  implying the key is gone. The card renders that distinction and no longer
+  disables the button for a read-only layer.
+
+### Changed
+
+- **API keys now have exactly ONE home: the credential center.** Read, write,
+  and clear all address it, so the store the card saves into is the store a
+  request authenticates from. The environment, `~/.tinyfish/config.json` (the
+  TinyFish CLI's file), the plugin config, and the AnySearch skill's `.env` are
+  **no longer key sources**. Previously a key could be supplied by a layer the
+  card could neither show nor edit, which is how a saved key appeared to have no
+  effect.
+- **The credential reference is renamed** to `HYDRASEARCH_TINYFISH_API_KEY` /
+  `HYDRASEARCH_ANYSEARCH_API_KEY` (see Fixed). A key previously stored under the
+  old names must be re-entered in the card. `TINYFISH_API_KEY` /
+  `ANYSEARCH_API_KEY` remain exported as diagnostic names only.
+- `tinyfish.apiKey`, `tinyfish.apiKeyEnv`, `anysearch.apiKey`, and
+  `anysearch.apiKeyEnv` are removed from the config schema and from
+  `cordis.patch.yml`. A stale value in an existing `settings.yaml` is ignored
+  (the schema fills no such field).
+- The card's key badge now names the credential-center layer that supplies the
+  value (local file / environment layer / `.env` layer) instead of reporting
+  every configured key as an ordinary stored one.
+- `BackendRuntime` reads keys through a new per-context `CredentialKeyStore`.
+  The seam's `available()` is synchronous while credential resolution is async,
+  so the store holds a snapshot that is refreshed eagerly, on every
+  `credentials/updated` event, and after each durable write. `resolve()` stays
+  authoritative and per-operation: the snapshot only decides whether a backend
+  is *offered*, never which key reaches the wire.
+- The auto-registered-key adoption path writes to the credential center only;
+  its `.env` fallback is removed along with the second store it represented.
+
 ### Added
 
 - English README (`README.en.md`) with a language switcher, and a `$DSH_HOME`
