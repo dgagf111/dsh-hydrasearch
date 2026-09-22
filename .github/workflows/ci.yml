@@ -1,0 +1,148 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# Cancel a superseded run on the same ref instead of paying for both.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: verify (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install DSH service modules
+        # These are the packages the plugin resolves at runtime, installed here so
+        # the suites can run WITHOUT a local DSH profile.
+        #
+        # Three deliberate choices:
+        #
+        #   1. Exact pins, not carets. The `latest` dist-tag on npm still points
+        #      at 0.0.1-rc.1 for most of the @deepseek-ai/dsh-* family, so a range
+        #      would silently resolve to a generation this plugin was never
+        #      tested against. DSH is in developer preview; a floating range is
+        #      how a green CI starts lying.
+        #   2. rc.6, the generation this plugin targets and the one the desktop
+        #      app ships. The `dsh.*` peer closure below is what makes
+        #      `dsh-web` / `dsh-settings-file` importable at all — each one was
+        #      added because an import actually failed without it.
+        #   3. `--legacy-peer-deps` is required, not cosmetic: the DSH peer graph
+        #      is self-referential across generations (dsh-tools@rc.6 declares a
+        #      peer on dsh-agent@^0.1.0-rc.6, whose own peer chain pulls rc.8), so
+        #      npm's strict resolver reports ERESOLVE even though every package
+        #      involved is published and installable.
+        run: |
+          npm install --no-audit --no-fund --legacy-peer-deps \
+            @deepseek-ai/cordis@^4.0.1 \
+            @deepseek-ai/dsh-app-boot@0.1.0-rc.6 \
+            @deepseek-ai/dsh-atomic-write@0.1.0-rc.6 \
+            @deepseek-ai/dsh-credentials@0.1.0-rc.6 \
+            @deepseek-ai/dsh-credentials-local@0.1.0-rc.6 \
+            @deepseek-ai/dsh-home-paths@0.1.0-rc.6 \
+            @deepseek-ai/dsh-launch-environment@0.1.0-rc.6 \
+            @deepseek-ai/dsh-llm@0.1.0-rc.6 \
+            @deepseek-ai/dsh-scope@0.1.0-rc.6 \
+            @deepseek-ai/dsh-settings@0.1.0-rc.6 \
+            @deepseek-ai/dsh-settings-file@0.1.0-rc.6 \
+            @deepseek-ai/dsh-system-prompt@0.1.0-rc.6 \
+            @deepseek-ai/dsh-timeout@0.1.0-rc.6 \
+            @deepseek-ai/dsh-tools@0.1.0-rc.6 \
+            @deepseek-ai/dsh-web@0.1.0-rc.6 \
+            @deepseek-ai/schemastery@^3.18.2 \
+            react@^18.3.1 \
+            react-dom@^18.3.1
+
+      - name: Server-side unit checks
+        # The live-network section self-skips when no API key is present, so this
+        # runs the full offline contract suite in CI. Add a TINYFISH_API_KEY
+        # repository secret to also exercise the real service.
+        env:
+          TINYFISH_API_KEY: ${{ secrets.TINYFISH_API_KEY }}
+          ANYSEARCH_API_KEY: ${{ secrets.ANYSEARCH_API_KEY }}
+        run: node scripts/verify.mjs
+
+      - name: Browser-half checks
+        run: node scripts/verify-client.mjs
+
+      - name: In-process integration checks
+        # Mounts the real WebRuntime / settings / credentials services on a real
+        # Cordis context and calls the plugin's apply(). This is the suite that
+        # proves the plugin works against the actual seam rather than a stub.
+        run: node scripts/verify-integration.mjs
+
+      - name: Shipped modules parse, and the manifest is self-consistent
+        # `verify-profile.mjs` composes a live PROFILE, which CI has no access to,
+        # so it cannot run here. What CI can still prove is that every shipped
+        # module PARSES and that the manifest's own claims hold — `name: ./lib/index.js`
+        # in cordis.patch.yml is resolved relative to the patch file, so a typo
+        # there is a load failure that no unit test would see.
+        run: |
+          node --check lib/index.js
+          node --check lib/tinyfish.js
+          node --check lib/anysearch.js
+          node --check lib/client.js
+          node --check scripts/deploy.mjs
+          echo "all shipped modules parse"
+
+          node -e '
+            const { readFileSync, existsSync } = require("node:fs")
+            const assert = require("node:assert/strict")
+            const path = require("node:path")
+
+            const pkg = JSON.parse(readFileSync("package.json", "utf8"))
+            assert.equal(pkg.name, "dsh-hydrasearch")
+            assert.ok(pkg.dsh.bundle.patch, "the bundle patch must be declared")
+            assert.ok(pkg.dsh.client, "the client face must be declared")
+            assert.ok(pkg.files.includes(pkg.dsh.bundle.patch), "the patch must be published")
+
+            // Every literal file listed for publication must exist.
+            for (const f of pkg.files) {
+              if (f.includes("*")) continue
+              assert.ok(existsSync(f), "published file missing: " + f)
+            }
+
+            // The bundle patch row name is resolved against the patch file dir.
+            const patch = readFileSync(pkg.dsh.bundle.patch, "utf8")
+            const rowNames = [...patch.matchAll(/^\s*name:\s*(\S+)\s*$/gm)].map((m) => m[1])
+            assert.ok(rowNames.length > 0, "the bundle patch declares no row name")
+            for (const name of rowNames) {
+              const resolved = path.resolve(path.dirname(pkg.dsh.bundle.patch), name)
+              assert.ok(existsSync(resolved), "row name does not resolve: " + name + " -> " + resolved)
+            }
+            console.log("manifest checks passed; row names resolve:", rowNames.join(", "))
+          '
+
+  package:
+    name: npm pack sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: The published tarball contains what it claims
+        run: |
+          npm pack --dry-run 2>&1 | tee /tmp/pack.txt
+          for expected in lib/index.js lib/client.js lib/tinyfish.js lib/anysearch.js cordis.patch.yml README.md LICENSE; do
+            grep -q "$expected" /tmp/pack.txt || { echo "MISSING FROM TARBALL: $expected"; exit 1; }
+          done
+          # A half-written staging directory must never ship.
+          if grep -q '\.staging/' /tmp/pack.txt; then echo "staging dir leaked into the tarball"; exit 1; fi
+          echo "tarball contents verified"

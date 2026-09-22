@@ -1,0 +1,115 @@
+# dsh-hydrasearch — TinyFish + AnySearch web search and fetch for DeepSeek Harness.
+#
+# This file is the package's Bundle patch. The profile loader composes it (see
+# `dsh.profile.bundles` in the profile's package.json) BEFORE the profile's own
+# cordis.patch.yml, so the user layer always wins on conflict.
+#
+# The row id below (`hydrasearch`) is load-bearing: the browser half registers
+# its Plugins-page configuration page under the slot key
+# `<package name>#<row id>` = `dsh-hydrasearch#hydrasearch`
+# (see ui-plugin-manager rowConfigKey). Renaming the id without updating
+# lib/client.js silently removes the configuration page from the Plugins page.
+#
+# WHY `name` IS `./lib/index.js` — RELATIVE TO **THIS FILE**, NOT TO THE PROFILE
+# -----------------------------------------------------------------------------
+# Two things are true at once, and getting either wrong makes the row report
+# "failed to import" (`entry.fiber === undefined`):
+#
+# 1. A BARE specifier cannot work. The packaged desktop app's Loader lives inside
+#    `app.asar`, OUTSIDE the profile tree, so `dsh-hydrasearch` resolves from the
+#    app's own installation and never reaches `<profile>/node_modules`.
+#
+# 2. A relative name is anchored by `app-boot`'s `anchorInsertedPluginNames()`
+#    against THE DIRECTORY OF THE PATCH FILE THAT DECLARED IT — not against the
+#    profile root. `loadOverlayPatches()` rewrites every `./…` / `../…` insert
+#    name to `pathToFileURL(resolve(dirname(patchFile), name))`.
+#
+# This file lives in the package directory itself
+# (`<profile>/node_modules/dsh-hydrasearch/`), so the entry is `./lib/index.js`.
+#
+# The previous value, `./node_modules/dsh-hydrasearch/lib/index.js`, assumed
+# profile-root anchoring. Under (2) it anchored to the PACKAGE directory and
+# double-nested into
+#   <profile>/node_modules/dsh-hydrasearch/node_modules/dsh-hydrasearch/lib/index.js
+# which does not exist — and that is literally the "failed to import" path the
+# desktop app prints in its banner.
+#
+# Consequence: this layer's convention is the OPPOSITE of the profile's own
+# `cordis.patch.yml`, which resolves `./plugins/…` against the profile root. That
+# works only because that file itself sits in the profile root. Same rule, two
+# different results — never copy a path from one layer into the other.
+#
+# Installing as a BUNDLE is still required and still correct: it is what makes
+# the package appear on the Plugins page and dispatch `plugins.row.config`.
+# The two requirements are independent — bundle membership for VISIBILITY, a
+# path for LOADABILITY.
+#
+# Config keys not listed here inherit the schema defaults in lib/index.js. Every
+# value below is persisted by the settings service, so editing a field from the
+# card writes to the profile's settings document and survives restarts.
+#
+# `web.searchProvider` / `web.fetchProvider` are deliberately NOT set here: the
+# plugin claims an unset seat at apply() time, and a row config REPLACES the
+# whole `web` config, so setting only one id would silently drop the other (the
+# same trap dsh-free-search's patch documents). Configure both or neither.
+- insert:
+    - id: hydrasearch
+      name: ./lib/index.js
+      config:
+        # Ordered backend ids; earlier wins. Reorder by dragging in the card.
+        priority:
+          - tinyfish
+          - anysearch
+        # Walk the chain when a backend fails. Off = first available backend is final.
+        failover: true
+        takeOverSearch: true
+        takeOverFetch: true
+        # 'auto' follows `priority`; otherwise pin one backend id for web_fetch.
+        fetchBackend: auto
+
+        tinyfish:
+          enabled: true
+          # Leave empty to use $TINYFISH_API_KEY, then ~/.tinyfish/config.json
+          # (written by `tinyfish auth login`), then the credential-center ref.
+          apiKey: ''
+          apiKeyEnv: TINYFISH_API_KEY
+          searchBaseURL: https://api.search.tinyfish.ai/
+          fetchBaseURL: https://api.fetch.tinyfish.ai/
+          purpose: ''
+          language: ''
+          location: ''
+          # web | news | research_paper; blank lets the service decide.
+          domainType: ''
+          includeDomains: ''
+          excludeDomains: ''
+          # YYYY-MM-DD bounds; blank disables.
+          afterDate: ''
+          beforeDate: ''
+          # Freshness window in minutes, publication-year bounds; 0 disables.
+          recencyMinutes: 0
+          pubYearMin: 0
+          pubYearMax: 0
+          # Pages per search (1-10); each page is one billed round trip.
+          maxPages: 3
+          # markdown | html | json
+          fetchFormat: markdown
+          fetchLinks: false
+          verbose: false
+
+        anysearch:
+          enabled: true
+          # Leave empty for anonymous access (lower quota), or set a key here /
+          # in $ANYSEARCH_API_KEY / in the skill's .env file.
+          apiKey: ''
+          apiKeyEnv: ANYSEARCH_API_KEY
+          # Empty uses $ANYSEARCH_API_BASE_URL, then the public host.
+          baseURL: ''
+          # Vertical sub-domain tag (e.g. finance.quote); blank = general web search.
+          tag: ''
+          # Vertical parameters as a JSON object string; requires `tag`.
+          params: ''
+          zone: ''
+          language: ''
+          # 1-10
+          maxResults: 10
+          verbose: false

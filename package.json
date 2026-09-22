@@ -1,0 +1,103 @@
+{
+  "name": "dsh-hydrasearch",
+  "version": "0.2.0",
+  "description": "TinyFish + AnySearch web search and fetch provider for DeepSeek Harness (DSH): registers a ctx.web failover chain with an operator-controlled backend priority, so the built-in web_search and web_fetch tools run through TinyFish and AnySearch, with a settings card in the Plugins page.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "lib/tinyfish.js",
+    "lib/anysearch.js",
+    "cordis.patch.yml",
+    "README.md",
+    "README.en.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "web-search",
+    "web-fetch",
+    "tinyfish",
+    "anysearch",
+    "failover",
+    "search",
+    "fetch"
+  ],
+  "license": "MIT",
+  "author": "dgagf111",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dgagf111/dsh-hydrasearch.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dgagf111/dsh-hydrasearch/issues"
+  },
+  "homepage": "https://github.com/dgagf111/dsh-hydrasearch#readme",
+  "scripts": {
+    "verify": "node scripts/verify.mjs",
+    "verify:client": "node scripts/verify-client.mjs",
+    "verify:profile": "node scripts/verify-profile.mjs",
+    "verify:integration": "node scripts/verify-integration.mjs",
+    "verify:all": "node scripts/verify.mjs && node scripts/verify-client.mjs && node scripts/verify-profile.mjs && node scripts/verify-integration.mjs",
+    "deploy": "node scripts/deploy.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ],
+      "platform": "web"
+    },
+    "engines": {
+      "dsh": ">=0.1.6-alpha.2"
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.1.6-alpha.2": "compatible"
+      }
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-settings": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-web": "^0.1.0-rc.6"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-app-boot": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-atomic-write": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-credentials": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-credentials-local": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-home-paths": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-launch-environment": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-scope": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-settings": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-settings-file": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-system-prompt": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-timeout": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-web": "0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "^3.18.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}

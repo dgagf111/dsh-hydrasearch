@@ -1,0 +1,25 @@
+# Normalize all text to LF in the repository. This project is developed on
+# Windows and written in files that are copied verbatim into a DSH profile;
+# without this, a Windows checkout plus a Linux checkout produce different bytes
+# for identical content, and `scripts/verify-profile.mjs`'s byte-equality check
+# ("the installed copy is byte-current with the source tree") reports a false
+# failure.
+* text=auto eol=lf
+
+# Windows-native scripts keep CRLF so they run under cmd.exe / older PowerShell.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary assets are never touched.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+# Keep the generated pnpm lockfile out of diffs' language stats.
+pnpm-lock.yaml linguist-generated=true

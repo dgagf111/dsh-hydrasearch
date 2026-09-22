@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Deployment artifacts produced by scripts/deploy.mjs (staging dir it renames
+# into place) — never commit a half-written install.
+.staging/
+
+# Local secrets. The plugin resolves keys from the credential center, the
+# environment, `~/.tinyfish/config.json`, and the AnySearch skill's `.env`;
+# none of those may ever be tracked here.
+.env
+.env.*
+!.env.example
+*.key
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and scratch output
+*.log
+npm-debug.log*
+pnpm-debug.log*
+coverage/
+*.tsbuildinfo

@@ -1,0 +1,74 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+- English README (`README.en.md`) with a language switcher, and a `$DSH_HOME`
+  path convention that is not Windows-specific.
+- `LICENSE` file (MIT). The license was already declared in `package.json` and
+  the README; this adds the canonical file GitHub reads.
+- `.gitattributes` forcing LF in the repository. Copies of this package are
+  compared byte-for-byte against the installed tree, so line-ending drift is a
+  real failure mode rather than cosmetics.
+- GitHub Actions CI running the offline test suites on Node 20 and 22.
+- Regression coverage for the TinyFish domain-list contract: omitting
+  `includeDomains` / `excludeDomains` entirely, blank entries inside a supplied
+  list, and a list that is blank after trimming.
+
+### Fixed
+
+- `searchTinyfish()` threw `TypeError: Cannot read properties of undefined
+  (reading 'length')` when `includeDomains` / `excludeDomains` were omitted,
+  despite both being documented as optional. A new `domainList()` normalizer
+  treats an absent or non-array value as "no restriction".
+- Blank entries inside a domain list were documented as dropped but were in
+  fact sent to the service verbatim (e.g. `,+github.com+,`). They are now
+  trimmed and removed, and an all-blank list is omitted instead of sent empty
+  (TinyFish rejects an empty `include_domains`).
+
+### Changed
+
+- `scripts/verify-profile.mjs` no longer asserts the presence of
+  `nowledge-mem` / `nowledge-mem-mcp` rows. Those are rows in the maintainer's
+  own profile; requiring them made the suite fail on every other machine. The
+  check now verifies that pre-existing rows are *preserved* rather than that
+  specific private rows exist, and it tolerates a user layer with no `insert`
+  list at all.
+- `scripts/verify-profile.mjs` accepts both supported web-seam wirings: an
+  explicit user-layer override, or reliance on the plugin's `takeOverSearch` /
+  `takeOverFetch` guards when the seat is unset. An incomplete explicit override
+  (only one of the two ids) is still a failure.
+- The auto-registered-key test fixture no longer uses an `as_sk_<32 hex>`
+  placeholder, which had the exact shape of a live credential and tripped secret
+  scanners. It is now an obviously fake token.
+
+## [0.2.0]
+
+### Added
+
+- Multi-backend web search and fetch for DeepSeek Harness. Registers three
+  providers on the `ctx.web` seam: `hydrasearch` (the failover chain), plus
+  `tinyfish` and `anysearch` as single-backend providers so an operator can pin
+  one without uninstalling the plugin.
+- Operator-controlled backend priority, persisted in the `hydrasearch` settings
+  namespace and reorderable by dragging in the Plugins page card.
+- Automatic failover with an honest result note: the outcome distinguishes a
+  backend that was *never tried* (no key / disabled) from one that *failed*.
+- Per-backend configuration in the settings card, covering every API parameter
+  each backend supports, written as independent paths so editing one backend can
+  never clobber the other.
+- Bridge routes for probing the chain or a single backend, reading and writing
+  credentials, and AnySearch sub-domain discovery.
+- Four verification suites: `verify.mjs` (transports, providers, failover,
+  bridge guardrails, plus live-network checks), `verify-client.mjs` (the browser
+  half under real React), `verify-profile.mjs` (install shape via DSH's own
+  loader), and `verify-integration.mjs` (in-process on a real Cordis context).
+
+[Unreleased]: https://github.com/dgagf111/dsh-hydrasearch/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/dgagf111/dsh-hydrasearch/releases/tag/v0.2.0
