@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Both READMEs were cut from ~460 lines to ~205 and restructured to match what
+  other DSH plugins actually document: what it does, install, priority/failover,
+  configuration, API keys, development. The maintainer-facing material — why the
+  package must be installed as a bundle, row-name anchoring, cross-version symbol
+  imports, the symlink trap, internal design tradeoffs, and the CI/dependency
+  generation gotchas — moved to `docs/integration-notes.md`, which the READMEs
+  now link to.
 - `scripts/verify-profile.mjs` no longer asserts the presence of specific
   third-party rows that happened to exist in the maintainer's own profile. Those
   are rows the operator owns; requiring them made the suite fail on every other
