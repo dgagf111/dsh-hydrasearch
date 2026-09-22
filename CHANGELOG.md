@@ -34,12 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `scripts/verify-profile.mjs` no longer asserts the presence of
-  `nowledge-mem` / `nowledge-mem-mcp` rows. Those are rows in the maintainer's
-  own profile; requiring them made the suite fail on every other machine. The
-  check now verifies that pre-existing rows are *preserved* rather than that
-  specific private rows exist, and it tolerates a user layer with no `insert`
-  list at all.
+- `scripts/verify-profile.mjs` no longer asserts the presence of specific
+  third-party rows that happened to exist in the maintainer's own profile. Those
+  are rows the operator owns; requiring them made the suite fail on every other
+  machine. The check now verifies that pre-existing rows are *preserved* rather
+  than that particular private rows exist, and it tolerates a user layer with no
+  `insert` list at all.
 - `scripts/verify-profile.mjs` accepts both supported web-seam wirings: an
   explicit user-layer override, or reliance on the plugin's `takeOverSearch` /
   `takeOverFetch` guards when the seat is unset. An incomplete explicit override
