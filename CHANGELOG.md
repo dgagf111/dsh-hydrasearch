@@ -36,6 +36,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BackendRuntime.fetch`, and an end-to-end check on a real Cordis context that
   the shipped `purpose` default reaches both the search query string and the
   fetch body. `verify.mjs` 80 → 84 checks, `verify-integration.mjs` 24 → 25.
+- **Compatibility with DSH 0.1.7-alpha.1's settings service.** That release
+  replaced `SettingsProvider` with `SettingsForms`, which takes no registration
+  at all and derives its forms from the plugin's `Config` schema — but only for
+  fields under a `volatile` node. Three shims keep one source working on the
+  0.1.6-alpha.2 desktop build, 0.1.7-alpha.1, and the rc line:
+  - `installSettingsSection` gained a third capability branch: `installSection`
+    (0.1.6) → `register` (rc / earliest) → `settings/document-updated`
+    subscription (0.1.7, where nothing is registered and the loader entry id
+    *is* the namespace).
+  - `volatile()` feature-detects schemastery's `.volatile()` marker, which
+    arrived in 3.18.3. The 0.1.6-alpha.2 desktop build ships 3.18.2, where the
+    method does not exist, so an unconditional call would throw during module
+    evaluation and take the whole plugin down at import time.
+  - `resolveConfigObject()` / `unwrapVolatile()` / `isVolatileRef()` read through
+    the cordis volatile reference that a volatile-marked schema makes the loader
+    hand to `apply()`. Detection is by the `cosmokit.volatile.write` symbol, so
+    it survives the duplicate package copies a profile keeps.
+  The root of `Config` is marked volatile rather than each of its ~35 leaves.
+  0.1.7 rejects any settings write whose path is not volatile
+  (`Config field "..." is not volatile`), and `volatileForm()` omits an entry
+  with no volatile ancestor — so without the root mark the card would render
+  nothing and every save would throw. One root mark covers every present and
+  future field, and keeps the nested backend schemas plain so
+  `TinyfishConfig({})` still returns a section rather than a ref.
+- `verify.mjs` gains a `release-compatibility contract` block (7 checks, 84 →
+  91) that fails if any of the three shims is removed. All of them were confirmed
+  to fail against the previous revision of `lib/index.js`.
 
 ### Fixed
 

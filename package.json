@@ -1,6 +1,6 @@
 {
   "name": "dsh-hydrasearch",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "TinyFish + AnySearch web search and fetch provider for DeepSeek Harness (DSH): registers a ctx.web failover chain with an operator-controlled backend priority, so the built-in web_search and web_fetch tools run through TinyFish and AnySearch, with a settings card in the Plugins page.",
   "type": "module",
   "main": "lib/index.js",
@@ -73,7 +73,8 @@
     },
     "compatibility": {
       "dshReleases": {
-        "0.1.6-alpha.2": "compatible"
+        "0.1.6-alpha.2": "compatible",
+        "0.1.7-alpha.1": "compatible"
       }
     }
   },

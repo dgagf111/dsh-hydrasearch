@@ -71,8 +71,147 @@ does not provide an export named 'installSettingsSection'
 | `describe / update / replace / mutate / section` | ✅ | ✅ 语义一致 |
 
 因此 `lib/index.js` **只用两代都有的 `settings.register()`**，并优先走 `installSection`（若存在）。这样 rc 与 alpha 都能加载。
+（0.1.7 让这条策略也过期了 —— 见下一节。）
 
 > **为什么本地测试会漏掉**：裸 `node` 从插件真实路径向上走，会命中 `%DSH_HOME%\profiles\node_modules\@deepseek-ai\*` —— 那是**指向另一棵树（rc.6）的 junction**，导入因此成功。App 用 enforce 钩子覆盖了这个走法。**验证必须在 alpha 树上做**。
+
+## 0.1.7-alpha.1：settings 服务换了一整个契约
+
+上面那条「只用两代都有的 `register()`」的策略，在 **0.1.7-alpha.1 失效**：`SettingsProvider` 被
+`SettingsForms` 取代，而后者**不接受任何注册**——`register` / `installSection` / `get` 三个方法全部消失。
+
+| 代际 | `ctx.settings` 的类 | 注册方法 | 表单来源 |
+| --- | --- | --- | --- |
+| rc.6 | `SettingsProvider`（free fn `installSettingsSection`） | `register(ns, schema, {base, validate})` | 注册时传入的 schema |
+| 0.1.6-alpha.2 | `SettingsProvider` | `installSection(owner, ns, schema, entry, hooks)` | 同上 |
+| **0.1.7-alpha.1+** | **`SettingsForms`** | **无** | **Loader entry 的 `Config` schema，按 entry id（= ns）取** |
+
+0.1.7 的方法集恰好是 `configure / describe / update / replace / mutate / write`，
+外加 `writable` / `documentPath` 两个 getter 和 `prepareDocument`。
+
+它读的是 **`entry.fiber.runtime.Config`**（活实例，不是 `toJSON()`），并按 **`entry.options.id`** 当命名空间。
+所以「row id = `hydrasearch` = 设置命名空间」这个巧合是**必需的**，不是巧合：改 row id 必须同步改
+`HYDRASEARCH_NS`，否则 `describe()` 里根本没有这一条。
+
+### 致命闸门：`meta.volatile`
+
+0.1.7 的 `describe()` 对每个 entry 调 `volatileForm(schema)`，**返回 `undefined` 就整条跳过**：
+
+```js
+const form = volatileForm(schema)
+if (form === undefined) return []      // ← entry 直接从 describe() 里消失
+```
+
+而 `volatileForm` 只在**某个祖先节点**带 `meta.volatile` 时才返回表单：
+
+```js
+function volatileForm(schema) {
+  if (schema.meta.volatile) return plainSchema(schema)
+  if (schema.type === 'object') { /* 递归收集，全空则 undefined */ }
+}
+```
+
+后果很隐蔽：**插件照常工作，但配置卡片空空如也，且没有任何报错**。
+
+写入侧还有第二道闸门（`SettingsForms.write`）：
+
+```js
+if (path.length && !isVolatilePath(schema, path)) throw new Error(`Config field "${path.join('.')}" is not volatile`)
+```
+
+卡片是按路径写字段的（`['tinyfish','language']` 这种 path op），所以**每个字段的路径都必须落在 volatile 子树内**。
+
+因此本项目**在 `Config` 根上打一个 volatile 标记**，而不是给 ~35 个叶子逐个打。`isVolatilePath` 遇到第一个
+volatile 祖先就返回 `true`，一个根标记覆盖全部现有与将来的字段，也不会漏。
+
+> **嵌套的 `tinyfish` / `anysearch` 刻意不打标记**。volatile 节点被调用时返回的是 **cordis ref 而不是普通值**，
+> 所以 `TinyfishConfig({})`（校验路径里到处在用它的默认值）会从「返回 section」变成「返回 ref」而失去默认值。
+
+### 但 `.volatile()` 在 0.1.6 那棵树上不存在
+
+这是本次最要命的兼容点。volatile 是一个**成组到达的特性**，不是单一包的变化：
+
+| 组件 | 0.1.6-alpha.2（桌面版现役） | 0.1.7-alpha.1 |
+| --- | --- | --- |
+| `schemastery` | **3.18.2**（无 `.volatile()`） | 3.18.3 |
+| `cosmokit` | 无 volatile | 1.8.4 |
+| `cordis-plugin-loader` | 1.0.3 | 1.0.4（`_commitVolatile` 在这） |
+| `cordis` | 4.0.2 | 4.0.3 |
+
+`z.string().volatile` 在 3.18.2 上是 `undefined`，直接调用会在**模块求值阶段**抛
+`TypeError: ... .volatile is not a function`，把整个插件在 import 时打死 —— 比「卡片打不开」严重得多。
+
+所以标记必须走特性探测：
+
+```js
+export function volatile(schema) {
+  return typeof schema?.volatile === 'function' ? schema.volatile() : schema
+}
+```
+
+### volatile 根会把 `apply()` 的 config 变成 ref
+
+这是最容易写错的一处：**打了 volatile 的 schema 被调用时返回 ref，不是普通对象**。
+而 loader 正是把 `fiber.config`（即那个 ref）交给 `apply()`：
+
+```js
+// cordis: runtime.callback(this.ctx, this.config)
+const out = Config(raw)     // ← 返回 ref：out.priority === undefined
+out.get().priority          // ← 才是值
+```
+
+所以插件内部**一律走 `resolveConfigObject()`**，绝不直接调 `Config()`：
+
+```js
+export function resolveConfigObject(config) {
+  return unwrapVolatile(Config(unwrapVolatile(config) ?? {}))
+}
+```
+
+**保留 ref（而不是快照）才是「改配置免重启」的机制**：cordis 把新值**原地写回**那个 ref
+（`cordis-plugin-loader` 的 `_commitVolatile` → `target[write](source.get())`），
+插件每次请求重新 `.get()` 就能看到新值。存快照会把插件钉死在挂载瞬间的配置上。
+
+检测用符号而不是 import —— `@deepseek-ai/cosmokit` 是 cordis 的传递依赖，不保证能从 profile 插件解析到；
+`Symbol.for` 注册表让跨包副本的检测依然成立：
+
+```js
+const VOLATILE_WRITE = Symbol.for('cosmokit.volatile.write')
+export function isVolatileRef(value) {
+  return value !== null && typeof value === 'object' && VOLATILE_WRITE in value
+}
+```
+
+### 三个分支缺一不可
+
+`installSettingsSection` 现在按**能力**（而非版本号）分派，这样未来某个树保留任一旧方法仍然走得通：
+
+1. `service.installSection` 存在 → 0.1.6 路径，provider 自己管注册与清理。
+2. `service.register` 存在 → rc 路径，手工对齐 effect 契约。
+3. 都没有 → **0.1.7 路径**：不注册任何东西，只订阅 `settings/document-updated` 做变更通知。
+   `setSource` **刻意不调用** —— `apply()` 已经把 live thunk 指向那个 volatile ref，
+   在这里用快照覆盖它反而会钉死配置。
+
+### 本轮实测记录
+
+三套探针都在**真实树**上跑过（不是 mock）：0.1.7 树用 npm 装 0.1.7-alpha.1 全家桶，
+0.1.6 树用 0.1.6-alpha.2 + schemastery 3.18.2，两边都挂真实 `WebRuntime` / `SettingsForms`（或 `SettingsProvider`）
+加真实 Cordis root：
+
+| 探针 | 0.1.6-alpha.2 | 0.1.7-alpha.1 |
+| --- | --- | --- |
+| 模块求值 + provider 注册 | ✅ | ✅ |
+| `installSettingsSection` 分派 | ✅ 走 `installSection` | ✅ 走变更订阅 |
+| 配置卡片有表单可渲染 | ✅ 无需 volatile | ✅ `volatileForm` 返回表单 |
+| 卡片保存（path op）落到 live config | ✅ | ✅ |
+| `describe()` 视图与插件读到的一致 | ✅ | ✅ |
+
+**修之前的症状（0.1.7 上实拍）**：`apply()` 不抛错，日志里一句
+`TypeError: provider.register is not a function`，provider 照常注册、搜索照常可用，
+但 `describe()` 里 `hydrasearch` 条目数为 **0** —— 卡片彻底消失。
+
+> 逐包审计（哪些接口没变、为什么、如何复现）另见
+> [dsh-0.1.7-plugin-interface-audit.md](./dsh-0.1.7-plugin-interface-audit.md)。
 
 ## 为什么不能用 symlink / junction
 

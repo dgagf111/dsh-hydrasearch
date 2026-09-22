@@ -575,10 +575,210 @@ async function mountWeb(config = {}) {
   return ctx.web
 }
 
-/** Build a config resolver over the plugin's schema with overrides applied. */
+/** Build a plain, fully-defaulted config section with overrides applied. */
 function cfg(overrides = {}) {
-  return plugin.Config(overrides)
+  return plugin.resolveConfigObject(overrides)
 }
+
+/* ------------------------------------------------ cross-generation contract */
+
+/*
+ * These lock in the compatibility surface the plugin must hold across the DSH
+ * generations it supports (0.1.6-alpha.2, 0.1.7-alpha.1+, and the rc line).
+ * They are deliberately behavioural rather than version-sniffing: each one
+ * would fail if the corresponding shim were removed.
+ */
+
+console.log('\nrelease-compatibility contract')
+
+await check('the Config schema stays plain-callable through the resolver', () => {
+  // `Config` is volatile-marked at the root on runtimes with schemastery
+  // >= 3.18.3, which makes a DIRECT call return a cordis ref instead of a plain
+  // section. Everything inside the plugin reads plain values, so the resolver
+  // is what keeps those reads correct — and it must work on both generations.
+  const section = plugin.resolveConfigObject({ tinyfish: { language: 'zh' } })
+  assert.equal(typeof section, 'object')
+  assert.equal(typeof section.get, 'undefined', 'resolved config must be plain, not a ref')
+  assert.equal(section.tinyfish.language, 'zh')
+  assert.deepEqual(section.priority, ['tinyfish', 'anysearch'], 'defaults must still be filled')
+})
+
+await check('the resolver accepts an already-resolved section', () => {
+  const once = plugin.resolveConfigObject({ failover: false })
+  const twice = plugin.resolveConfigObject(once)
+  assert.equal(twice.failover, false)
+  assert.equal(twice.searchBackend, 'auto')
+})
+
+await check('volatile() marks when the runtime can, and passes through when it cannot', () => {
+  // schemastery 3.18.2 (shipped by the 0.1.6-alpha.2 desktop build) has no
+  // `.volatile()`; calling it unconditionally would throw while the module is
+  // evaluated and take the whole plugin down at import time. Where the method
+  // exists the marker must land, because 0.1.7's `volatileForm()` omits any
+  // entry whose schema lacks it — which presents as a settings page that
+  // silently renders nothing, with no error anywhere.
+  const supportsVolatile = typeof plugin.Config.volatile === 'function'
+  const probe = plugin.volatile(plugin.Config)
+  assert.ok(probe, 'volatile() must return a schema')
+
+  if (supportsVolatile) {
+    assert.equal(probe.meta?.volatile, true, 'a capable runtime must carry the marker')
+  } else {
+    assert.equal(probe, plugin.Config, 'an incapable runtime must get the node back unchanged')
+  }
+
+  const bare = { notASchema: true }
+  assert.equal(plugin.volatile(bare), bare, 'a node without .volatile() passes through')
+})
+
+await check('isVolatileRef detects refs structurally, not by class', () => {
+  // Detection is by the cosmokit symbol so it survives duplicate package copies
+  // (the profile keeps its own tree alongside the app's).
+  assert.equal(plugin.isVolatileRef({}), false)
+  assert.equal(plugin.isVolatileRef(null), false)
+  assert.equal(plugin.isVolatileRef(undefined), false)
+  assert.equal(plugin.isVolatileRef('x'), false)
+  assert.equal(plugin.isVolatileRef([]), false)
+
+  const symbol = Symbol.for('cosmokit.volatile.write')
+  const ref = { [symbol]: () => {}, get: () => ({ priority: ['anysearch'] }) }
+  assert.equal(plugin.isVolatileRef(ref), true)
+  assert.deepEqual(plugin.unwrapVolatile(ref), { priority: ['anysearch'] }, 'a ref unwraps to its live value')
+  assert.equal(plugin.unwrapVolatile('plain'), 'plain', 'a plain value passes through')
+})
+
+await check('unwrapVolatile reflects a write made through the ref', () => {
+  // This is the "edit takes effect without a restart" mechanism on 0.1.7: the
+  // settings service writes through the ref that `apply()` kept, so a read must
+  // observe the new value rather than the mount-time snapshot.
+  const symbol = Symbol.for('cosmokit.volatile.write')
+  let value = { priority: ['tinyfish', 'anysearch'] }
+  const ref = { [symbol]: (next) => { value = next }, get: () => value }
+
+  assert.deepEqual(plugin.unwrapVolatile(ref).priority, ['tinyfish', 'anysearch'])
+  ref[symbol]({ priority: ['anysearch', 'tinyfish'] })
+  assert.deepEqual(plugin.unwrapVolatile(ref).priority, ['anysearch', 'tinyfish'], 'the ref stays live')
+})
+
+await check('installSettingsSection survives a service with neither register nor installSection', () => {
+  // The 0.1.7 shape: `SettingsForms` exposes no registration method at all, so
+  // the shim must fall through to the change-notification branch instead of
+  // throwing `provider.register is not a function` (which is exactly how the
+  // current released plugin fails on that generation).
+  const listeners = []
+  const fakeCtx = {
+    fiber: { state: 2 },
+    inject: (_deps, fn) => fn({
+      effect: () => {},
+      on: (event, handler) => listeners.push([event, handler]),
+    }),
+  }
+  const service = {
+    // Only the 0.1.7 surface: no register, no installSection.
+    describe: () => [],
+    update: async () => {},
+    replace: async () => {},
+    mutate: async () => {},
+  }
+  const scoped = {
+    get settings() {
+      return service
+    },
+    effect: () => {},
+    on: (event, handler) => listeners.push([event, handler]),
+  }
+  const ctx = { fiber: { state: 2 }, inject: (_deps, fn) => fn(scoped) }
+
+  let changes = 0
+  assert.doesNotThrow(() => {
+    plugin.installSettingsSection(ctx, 'hydrasearch', plugin.Config, {}, {
+      setSource: () => {},
+      onChange: () => { changes++ },
+    })
+  }, 'a registration-less settings service must not throw')
+
+  assert.equal(changes, 1, 'mounting notifies once')
+  const entry = listeners.find(([event]) => event === 'settings/document-updated')
+  assert.ok(entry, 'the change-notification listener must be registered')
+
+  // Only this namespace's own updates may trigger a refresh.
+  entry[1]('hydrasearch')
+  assert.equal(changes, 2)
+  entry[1]('some-other-namespace')
+  assert.equal(changes, 2, 'another namespace\'s update must be ignored')
+  entry[1]({ toString: () => 'hydrasearch' })
+  assert.equal(changes, 3, 'a branded namespace must compare by string')
+})
+
+await check('installSettingsSection still prefers installSection when present', () => {
+  // The 0.1.6 path must not regress to the fallback.
+  let installed = null
+  const ctx = {
+    fiber: { state: 2 },
+    inject: (_deps, fn) => fn({
+      settings: { installSection: (...args) => { installed = args } },
+      effect: () => {},
+      on: () => {},
+    }),
+  }
+  plugin.installSettingsSection(ctx, 'hydrasearch', plugin.Config, { base: true }, {
+    setSource: () => {},
+    onChange: () => {},
+  })
+  assert.ok(installed, 'installSection must be called when the service offers it')
+})
+
+await check('apply() unwraps a volatile config ref, and keeps it LIVE after mounting', () => {
+  // On 0.1.7 the loader hands `apply()` a REF for a volatile-marked Config. Two
+  // separate hazards, and this covers both:
+  //
+  //   1. A ref has no own fields, so `config.takeOverSearch` reads `undefined`
+  //      and the takeover guard silently declines, leaving the seam on whatever
+  //      provider the base bundle configured.
+  //   2. The provider must read through the ref on every call. Snapshotting it
+  //      at mount would mean a settings save only takes effect after a restart.
+  const WRITE = Symbol.for('cosmokit.volatile.write')
+  let value = plugin.resolveConfigObject({ priority: ['tinyfish', 'anysearch'] })
+  const ref = {
+    [WRITE]: (next) => { value = next },
+    get: () => value,
+  }
+
+  let registered = null
+  const ctxStub = {
+    web: {
+      registerSearchProvider: (provider) => { registered = provider },
+      registerFetchProvider: () => {},
+      searchProviderId: undefined,
+      fetchProviderId: undefined,
+    },
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
+    effect: () => {},
+    on: () => {},
+    inject: () => {},
+    get: () => undefined,
+    fiber: { state: 2 },
+  }
+
+  assert.doesNotThrow(() => plugin.apply(ctxStub, ref), 'apply must accept a volatile ref config')
+
+  // (1) `takeOverSearch`/`takeOverFetch` default to true, so a correctly
+  // unwrapped config claims BOTH seats. Reading the ref blindly claims neither.
+  assert.equal(ctxStub.web.searchProviderId, 'hydrasearch', 'a ref config must still claim the search seat')
+  assert.equal(ctxStub.web.fetchProviderId, 'hydrasearch', 'a ref config must still claim the fetch seat')
+
+  // (2) Liveness: `chain()` reads the live priority. Write through the ref the
+  // way a settings save does and the order must change with no remount.
+  assert.ok(registered !== null, 'the provider must be registered')
+  assert.deepEqual(registered.chain().map((b) => b.id), ['tinyfish', 'anysearch'])
+
+  ref[WRITE](plugin.resolveConfigObject({ priority: ['anysearch', 'tinyfish'] }))
+  assert.deepEqual(
+    registered.chain().map((b) => b.id),
+    ['anysearch', 'tinyfish'],
+    'a write through the ref must be visible to the already-mounted provider',
+  )
+})
 
 /* ------------------------------------------- credential-center test double */
 
@@ -739,7 +939,7 @@ await check('anysearch is available even without a key (anonymous tier)', () => 
 })
 
 await check('the config schema fills every default, including nested backends', () => {
-  const resolved = plugin.Config({})
+  const resolved = plugin.resolveConfigObject({})
   assert.deepEqual(resolved.priority, ['tinyfish', 'anysearch'])
   assert.equal(resolved.failover, true)
   assert.equal(resolved.takeOverSearch, true)
@@ -763,7 +963,7 @@ await check('the config schema fills every default, including nested backends', 
 await check('a nested override leaves the other backend section intact', () => {
   // This is what makes two settings surfaces safe to edit concurrently: writing
   // tinyfish.language must not restate (and therefore cannot clobber) anysearch.
-  const resolved = plugin.Config({ tinyfish: { language: 'zh' } })
+  const resolved = plugin.resolveConfigObject({ tinyfish: { language: 'zh' } })
   assert.equal(resolved.tinyfish.language, 'zh')
   assert.equal(resolved.tinyfish.maxPages, 3)
   assert.equal(resolved.anysearch.maxResults, 10)
@@ -812,7 +1012,7 @@ await check('the config validation rejects malformed values', () => {
   ]
   for (const [overrides, pattern] of cases) {
     assert.throws(
-      () => plugin.validateConfig(plugin.Config(overrides)),
+      () => plugin.validateConfig(plugin.resolveConfigObject(overrides)),
       pattern,
       `expected ${JSON.stringify(overrides)} to be rejected`,
     )
@@ -820,10 +1020,10 @@ await check('the config validation rejects malformed values', () => {
 })
 
 await check('a valid vertical tag and params pass validation', () => {
-  assert.doesNotThrow(() => plugin.validateConfig(plugin.Config({
+  assert.doesNotThrow(() => plugin.validateConfig(plugin.resolveConfigObject({
     anysearch: { tag: 'finance.quote', params: '{"type":"stock","symbol":"AAPL","cn_code":""}' },
   })))
-  assert.doesNotThrow(() => plugin.validateConfig(plugin.Config({})))
+  assert.doesNotThrow(() => plugin.validateConfig(plugin.resolveConfigObject({})))
 })
 
 /* ------------------------------------------------------------- the chain */
@@ -1180,7 +1380,7 @@ await check('bridge routes are exact-path POST handlers under the plugin prefix'
   const routes = plugin.makeBridgeRoutes({
     settings: { describe: () => [], writable: true, mutate: async () => {} },
     getCredentials: () => undefined,
-    getConfig: () => plugin.Config({}),
+    getConfig: () => plugin.resolveConfigObject({}),
     probeSearch: async () => ({}),
     probeBackend: async () => ({}),
     subDomains: async () => ({}),
@@ -1227,12 +1427,12 @@ async function invokeBridge(route, { body, method = 'POST', remote = '127.0.0.1'
 function bridgeDeps(overrides = {}) {
   return {
     settings: {
-      describe: () => [{ ns: 'hydrasearch', schema: {}, value: plugin.Config({}), revision: 3 }],
+      describe: () => [{ ns: 'hydrasearch', schema: {}, value: plugin.resolveConfigObject({}), revision: 3 }],
       writable: true,
       mutate: async () => {},
     },
     getCredentials: () => undefined,
-    getConfig: () => plugin.Config({}),
+    getConfig: () => plugin.resolveConfigObject({}),
     probeSearch: async () => ({ backend: 'tinyfish', sources: [], totalResults: 0 }),
     probeBackend: async () => ({ backend: 'tinyfish', sources: [], totalResults: 0 }),
     subDomains: async () => ({ domains: [] }),
@@ -1272,7 +1472,7 @@ await check('describe reports the chain, both credential slots, and the limits',
 await check('describe never returns a secret value', async () => {
   const routes = plugin.makeBridgeRoutes(bridgeDeps({
     settings: {
-      describe: () => [{ ns: 'hydrasearch', schema: {}, value: plugin.Config({}), revision: 1 }],
+      describe: () => [{ ns: 'hydrasearch', schema: {}, value: plugin.resolveConfigObject({}), revision: 1 }],
       writable: true,
       mutate: async () => {},
     },
@@ -1290,7 +1490,7 @@ await check('the mutate route persists a reordered priority list', async () => {
   const writes = []
   const routes = plugin.makeBridgeRoutes(bridgeDeps({
     settings: {
-      describe: () => [{ ns: 'hydrasearch', schema: {}, value: plugin.Config({}), revision: 7 }],
+      describe: () => [{ ns: 'hydrasearch', schema: {}, value: plugin.resolveConfigObject({}), revision: 7 }],
       writable: true,
       mutate: async (ns, ops) => { writes.push({ ns, ops }) },
     },
@@ -1309,7 +1509,7 @@ await check('a per-backend path op reaches the settings service unflattened', as
   const writes = []
   const routes = plugin.makeBridgeRoutes(bridgeDeps({
     settings: {
-      describe: () => [{ ns: 'hydrasearch', schema: {}, value: plugin.Config({}), revision: 2 }],
+      describe: () => [{ ns: 'hydrasearch', schema: {}, value: plugin.resolveConfigObject({}), revision: 2 }],
       writable: true,
       mutate: async (ns, ops) => { writes.push(ops) },
     },
@@ -1324,7 +1524,7 @@ await check('a per-backend path op reaches the settings service unflattened', as
 await check('the mutate route repels a stale revision', async () => {
   const routes = plugin.makeBridgeRoutes(bridgeDeps({
     settings: {
-      describe: () => [{ ns: 'hydrasearch', schema: {}, value: plugin.Config({}), revision: 9 }],
+      describe: () => [{ ns: 'hydrasearch', schema: {}, value: plugin.resolveConfigObject({}), revision: 9 }],
       writable: true,
       mutate: async () => {
         const error = new Error('revision moved')

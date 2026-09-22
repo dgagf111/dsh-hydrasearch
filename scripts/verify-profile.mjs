@@ -346,15 +346,48 @@ await check('the plugin imports only names that SURVIVE the app\'s enforced reso
   assert.equal(typeof mod.settingsNamespace, 'function', 'the plugin must export its own settingsNamespace')
   assert.equal(typeof mod.installSettingsSection, 'function', 'the plugin must export its own installSettingsSection')
 
-  // The portable path builds on `settings.register`, which BOTH generations have.
-  // Assert the source does not reach for a method only one generation owns
-  // without a fallback.
+  // Registration is capability-detected, because no single method exists across
+  // all supported generations:
+  //   `installSection`  — 0.1.6-alpha.2's provider method
+  //   `register`        — the rc line's method
+  //   neither           — 0.1.7-alpha.1's `SettingsForms`, which registers
+  //                       nothing and derives forms from the entry's schema
+  // Reaching for any one of them without a fallback breaks the generations that
+  // lack it — on 0.1.7 the failure is `provider.register is not a function`.
   assert.match(
     source,
-    /typeof provider\.installSection === 'function'/,
+    /typeof service\.installSection === 'function'/,
     'installSection must be feature-detected, not assumed',
   )
-  assert.match(source, /provider\.register\(/, 'the portable path must use settings.register()')
+  assert.match(
+    source,
+    /typeof service\.register === 'function'/,
+    'register must be feature-detected, not assumed',
+  )
+  // The 0.1.7 branch must exist and must be driven by the change notification,
+  // since there is no registration call to make.
+  assert.match(
+    source,
+    /sctx\.on\('settings\/document-updated'/,
+    'the registration-less generation must subscribe to settings/document-updated',
+  )
+  // The 0.1.7 form gate: without a volatile ancestor the entry is omitted from
+  // describe() and every path-op write is refused.
+  assert.match(source, /function makeConfig\(\)/, 'Config must be built through the volatile-aware factory')
+  assert.match(
+    source,
+    /return typeof schema\?\.volatile === 'function' \? schema\.volatile\(\) : schema/,
+    'volatile() must feature-detect, because schemastery 3.18.2 (the desktop build) lacks the method',
+  )
+  // Every internal read of the resolved config must go through the ref-aware
+  // resolver; a direct `Config(...)` call returns a REF on a volatile-capable
+  // runtime, so `cfg.priority` would silently read as undefined.
+  const directCalls = [...source.matchAll(/(?<![.\w])Config\(/g)]
+  assert.equal(
+    directCalls.length,
+    1,
+    `Config() must only be called from the resolver; found ${directCalls.length} call sites`,
+  )
 })
 
 await check('the chain provider ids match what the seam selects', async () => {

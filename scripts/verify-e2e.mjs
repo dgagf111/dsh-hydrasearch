@@ -66,7 +66,7 @@ async function mount() {
   await ctx.plugin(WebRuntime, {})
   await ctx.plugin(FileSettingsProvider, { path: path.join(scratch, 'settings.yaml') })
   await ctx.plugin(LocalCredentialProvider, { path: path.join(scratch, '.credentials.yaml') })
-  plugin.apply(ctx, plugin.Config({}))
+  plugin.apply(ctx, plugin.resolveConfigObject({}))
   await plugin.keyStoreFor(ctx).refresh()
   return ctx
 }
@@ -78,7 +78,7 @@ async function bridge(route, body) {
   const routes = plugin.makeBridgeRoutes({
     settings: ctx.settings,
     getCredentials: () => ctx.get('credentials'),
-    getConfig: () => plugin.Config({}),
+    getConfig: () => plugin.resolveConfigObject({}),
     refreshKeys: async () => { await plugin.keyStoreFor(ctx).refresh() },
     probeSearch: async () => ({
       query: 'q', backend: 'tinyfish', sources: [], totalResults: 0, latencyMs: 137,
@@ -205,7 +205,7 @@ await check('the real chain probe carries latencyMs (not just the stub)', async 
     await ctx.get('credentials').set(plugin.TINYFISH_API_KEY_REF, 'sk-live-probe')
     await plugin.keyStoreFor(ctx).refresh()
     const backend = new plugin.BackendRuntime(
-      plugin.TINYFISH_ID, ctx, () => plugin.Config({}), undefined,
+      plugin.TINYFISH_ID, ctx, () => plugin.resolveConfigObject({}), undefined,
     )
     const out = await backend.search({ query: 'q', maxResults: 5 }, undefined)
     assert.equal(typeof out.latencyMs, 'number', 'a backend search result must carry latencyMs')

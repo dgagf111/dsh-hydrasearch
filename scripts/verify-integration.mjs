@@ -185,7 +185,7 @@ async function mount(config = {}, options = {}) {
     if (typeof key === 'string' && key.length > 0) await credentials.set(ref, key)
   }
   // `apply` expects the schema-resolved config, exactly as the loader passes it.
-  const resolved = plugin.Config(sanitized)
+  const resolved = plugin.resolveConfigObject(sanitized)
   plugin.apply(ctx, resolved)
   // Hydrate the availability snapshot the way production does before deciding
   // which backends can serve.
@@ -249,7 +249,7 @@ await check('the default purpose reaches the wire on both search and fetch', asy
   // BackendRuntime. Only an end-to-end call through the real seam proves BOTH
   // halves agree — a schema default the runtime never reads would look set in
   // the card and send nothing.
-  const expected = plugin.Config({}).tinyfish.purpose
+  const expected = plugin.resolveConfigObject({}).tinyfish.purpose
   assert.ok(expected.length > 0, 'the shipped default must be non-empty')
 
   await ctx.web.search({ query: 'purpose provenance', maxResults: 1 })
@@ -289,8 +289,8 @@ async function bridge(route, body) {
   const routes = plugin.makeBridgeRoutes({
     settings: ctx.settings,
     getCredentials: () => ctx.get('credentials'),
-    getConfig: () => plugin.Config({
-      ...plugin.Config({}),
+    getConfig: () => plugin.resolveConfigObject({
+      ...plugin.resolveConfigObject({}),
       ...readConfigured(),
     }),
     probeSearch: async () => ({}),
