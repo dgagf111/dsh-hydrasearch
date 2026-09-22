@@ -48,7 +48,7 @@ const PACKAGE_NAME = 'dsh-hydrasearch'
 const PROFILE_PATCH = 'cordis.patch.yml'
 
 /** Files mirrored from the source tree into the profile. */
-const MIRRORED = ['lib', 'scripts', 'package.json', PROFILE_PATCH, 'README.md']
+const MIRRORED = ['lib', 'scripts', 'package.json', PROFILE_PATCH, 'README.md', 'README.en.md', 'LICENSE', 'CHANGELOG.md']
 
 /** Parse `--flag value` and boolean `--flag` arguments. */
 function parseArgs(argv) {
