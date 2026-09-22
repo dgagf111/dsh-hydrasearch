@@ -27,9 +27,3 @@ npm-debug.log*
 pnpm-debug.log*
 coverage/
 *.tsbuildinfo
-
-# Unrelated local tooling that happens to live in this workspace. `tools/` is
-# NOT part of this plugin: no published file, script, or test references it, and
-# its contents are private infrastructure helpers. Excluding the directory keeps
-# a blanket `git add -A` from sweeping them into a public release.
-tools/
