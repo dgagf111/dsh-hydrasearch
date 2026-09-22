@@ -30,6 +30,15 @@
 
 ## 安装
 
+```sh
+dsh plugin --profile web add github:dgagf111/dsh-hydrasearch
+```
+
+然后重启 `dsh web`。
+
+<details>
+<summary>从源码安装 / 手动部署</summary>
+
 ```powershell
 # 用 DSH 自带的 node 运行部署脚本：它会把包镜像进 profile 并按 bundle 接线
 $node = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe"
@@ -37,6 +46,8 @@ $node = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\nod
 ```
 
 脚本会把包装成 **bundle** 镜像到 profile（真实目录，非 symlink），并写入 `dsh.profile.bundles` 与 `dependencies`——这两条是插件页能列出它的前提。
+
+</details>
 
 然后在 profile 的用户层 `cordis.patch.yml` 里把 web seam 指过来（**两个 id 必须一起写**，只写一个会静默抹掉另一个）：
 

@@ -30,6 +30,15 @@ What actually takes effect:
 
 ## Installation
 
+```sh
+dsh plugin --profile web add github:dgagf111/dsh-hydrasearch
+```
+
+Then restart `dsh web`.
+
+<details>
+<summary>Install from source / manual deploy</summary>
+
 ```powershell
 # Run the deploy script with the node bundled with DSH: it mirrors the package into the profile and wires it up as a bundle
 $node = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe"
@@ -37,6 +46,8 @@ $node = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\nod
 ```
 
 The script mirrors the package into the profile as a **bundle** (a real directory, not a symlink) and writes it into `dsh.profile.bundles` and `dependencies` — both are prerequisites for the Plugins page to list it.
+
+</details>
 
 Then point the web seam at it in the profile's user-layer `cordis.patch.yml`. **Both ids must be set together**; setting only one silently drops the other:
 
@@ -46,6 +57,8 @@ Then point the web seam at it in the profile's user-layer `cordis.patch.yml`. **
     searchProvider: hydrasearch
     fetchProvider: hydrasearch
 ```
+
+> The plugin registers only the `hydrasearch` id, so there is no other value to put here. To change backends, edit `searchBackend` / `fetchBackend`, not the provider.
 
 Restart DeepSeek Harness, then open **Plugins page → Installed → `dsh-hydrasearch` → the row's configure entry**.
 
