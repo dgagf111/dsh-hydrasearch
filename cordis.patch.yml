@@ -77,7 +77,9 @@
           # written from the settings card. Environment variables are not read.
           searchBaseURL: https://api.search.tinyfish.ai/
           fetchBaseURL: https://api.fetch.tinyfish.ai/
-          purpose: ''
+          # Non-empty by default: the "why" behind the request, sent as `purpose`
+          # on BOTH the search and fetch path. Blank it to send no purpose.
+          purpose: Gather current, citable web sources to answer a user question
           language: ''
           location: ''
           # web | news | research_paper; blank lets the service decide.
@@ -96,6 +98,12 @@
           # markdown | html | json
           fetchFormat: markdown
           fetchLinks: false
+          fetchImageLinks: false
+          # Per-URL fetch budget in ms; 0 omits it (service accepts 1-110000).
+          fetchPerUrlTimeoutMs: 0
+          # Fetch cache tolerance in seconds. -1 omits `ttl` (accept any cached
+          # entry), 0 forces a live fetch, N accepts cache younger than N seconds.
+          fetchTtlSeconds: -1
           verbose: false
 
         anysearch:

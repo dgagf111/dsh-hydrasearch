@@ -128,7 +128,7 @@ TinyFish 需要 key；AnySearch 无 key 可用匿名档（额度较低）。
 | `enabled` | `true` | — |
 | `searchBaseURL` | `https://api.search.tinyfish.ai/` | 搜索端点 |
 | `fetchBaseURL` | `https://api.fetch.tinyfish.ai/` | 抓取端点 |
-| `purpose` | `''` | `purpose` 搜索意图提示 |
+| `purpose` | 见下 | `purpose` 意图提示（搜索与抓取都发） |
 | `language` | `''` | `language` |
 | `location` | `''` | `location` |
 | `domainType` | `''` | `domain_type`：`web` / `news` / `research_paper` |
@@ -142,7 +142,14 @@ TinyFish 需要 key；AnySearch 无 key 可用匿名档（额度较低）。
 | `maxPages` | `3` | 每次搜索最多翻几页（1–10） |
 | `fetchFormat` | `markdown` | 抓取格式：`markdown` / `html` / `json` |
 | `fetchLinks` | `false` | 抓取时同时返回页面链接 |
+| `fetchImageLinks` | `false` | `image_links`：抓取时同时返回图片链接 |
+| `fetchPerUrlTimeoutMs` | `0` | `per_url_timeout_ms`（0=不发；服务接受 1–110000） |
+| `fetchTtlSeconds` | `-1` | `ttl`：`-1`=不发（接受任何缓存）、`0`=强制实时、`N`=接受 N 秒内的缓存 |
 | `verbose` | `false` | 打印每次搜索/抓取日志 |
+
+> `purpose` **默认非空**：`Gather current, citable web sources to answer a user question`。TinyFish 把它当作请求的"为什么"——结果要喂给什么任务——而一个给 agent 用的 `web_search` / `web_fetch` 永远有这层意图，光靠关键词或裸 URL 表达不出来，所以默认替你写上。想回到服务端默认排序，把它清空即可（清空后该字段完全不发送）。
+>
+> `fetchTtlSeconds` 的三态是刻意的：服务端把**缺省** `ttl` 当作"接受任何缓存"，而显式 `0` 是"强制实时抓取"，两者不能合并——否则默认值会让每次抓取都变成实时。
 
 ### AnySearch（`anysearch.*`）
 
@@ -157,7 +164,7 @@ TinyFish 需要 key；AnySearch 无 key 可用匿名档（额度较低）。
 | `maxResults` | `10` | `max_results`（1–10） |
 | `verbose` | `false` | 打印日志 |
 
-写路径会校验：端点必须是绝对 URL、`maxPages` 在 1–10、`fetchFormat` 合法、日期是 `YYYY-MM-DD`、`params` 是合法 JSON 对象且必须同时有 `tag`。坏值在**卡片层就被拒**，不会静默禁用某个后端直到重启。
+写路径会校验：端点必须是绝对 URL、`maxPages` 在 1–10、`fetchFormat` 合法、`fetchPerUrlTimeoutMs` 为 0 或 1–110000、`fetchTtlSeconds` ≥ -1、日期是 `YYYY-MM-DD`、`params` 是合法 JSON 对象且必须同时有 `tag`。坏值在**卡片层就被拒**，不会静默禁用某个后端直到重启。
 
 ---
 

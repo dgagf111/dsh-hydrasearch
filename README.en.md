@@ -130,7 +130,7 @@ Every field is persisted in the `hydrasearch` settings namespace. Each field is 
 | `enabled` | `true` | — |
 | `searchBaseURL` | `https://api.search.tinyfish.ai/` | Search endpoint |
 | `fetchBaseURL` | `https://api.fetch.tinyfish.ai/` | Fetch endpoint |
-| `purpose` | `''` | `purpose` intent hint |
+| `purpose` | see note | `purpose` intent hint (sent on search AND fetch) |
 | `language` | `''` | `language` |
 | `location` | `''` | `location` |
 | `domainType` | `''` | `domain_type`: `web` / `news` / `research_paper` |
@@ -144,7 +144,14 @@ Every field is persisted in the `hydrasearch` settings namespace. Each field is 
 | `maxPages` | `3` | Max pages per search (1–10) |
 | `fetchFormat` | `markdown` | Fetch format: `markdown` / `html` / `json` |
 | `fetchLinks` | `false` | Also return the page's links when fetching |
+| `fetchImageLinks` | `false` | `image_links`: also return the page's image links |
+| `fetchPerUrlTimeoutMs` | `0` | `per_url_timeout_ms` (0 = omitted; service accepts 1–110000) |
+| `fetchTtlSeconds` | `-1` | `ttl`: `-1` = omitted (accept any cache), `0` = force live, `N` = accept cache younger than N seconds |
 | `verbose` | `false` | Log every search/fetch |
+
+> `purpose` is **non-empty by default**: `Gather current, citable web sources to answer a user question`. TinyFish treats it as the "why" behind the request — the task the results feed — and an agent-facing `web_search`/`web_fetch` always has that intent, which a bare keyword query or URL cannot express. Blank it to send no `purpose` at all and get the service's own default ranking.
+>
+> `fetchTtlSeconds` is deliberately tri-state: the service treats an **absent** `ttl` as "accept any cached entry" but an explicit `0` as "force a live fetch". Collapsing the two would turn every fetch live by default.
 
 ### AnySearch (`anysearch.*`)
 
@@ -159,7 +166,7 @@ Every field is persisted in the `hydrasearch` settings namespace. Each field is 
 | `maxResults` | `10` | `max_results` (1–10) |
 | `verbose` | `false` | Log |
 
-The write path validates that endpoints are absolute URLs, `maxPages` is 1–10, `fetchFormat` is legal, dates are `YYYY-MM-DD`, and `params` is a valid JSON object that also has a `tag`. Bad values are **rejected at the card**, rather than silently disabling a backend until the next restart.
+The write path validates that endpoints are absolute URLs, `maxPages` is 1–10, `fetchFormat` is legal, `fetchPerUrlTimeoutMs` is 0 or 1–110000, `fetchTtlSeconds` is ≥ -1, dates are `YYYY-MM-DD`, and `params` is a valid JSON object that also has a `tag`. Bad values are **rejected at the card**, rather than silently disabling a backend until the next restart.
 
 ---
 

@@ -197,9 +197,10 @@ function describeReply(overrides = {}) {
     fetchBackend: 'auto',
     tinyfish: {
       enabled: true, apiKey: '', searchBaseURL: 'https://api.search.tinyfish.ai/', fetchBaseURL: 'https://api.fetch.tinyfish.ai/',
-      purpose: '', language: '', location: '', domainType: '', includeDomains: '', excludeDomains: '',
+      purpose: 'Gather current, citable web sources to answer a user question', language: '', location: '', domainType: '', includeDomains: '', excludeDomains: '',
       afterDate: '', beforeDate: '', recencyMinutes: 0, pubYearMin: 0, pubYearMax: 0, maxPages: 3,
-      fetchFormat: 'markdown', fetchLinks: false, verbose: false,
+      fetchFormat: 'markdown', fetchLinks: false, fetchImageLinks: false, fetchPerUrlTimeoutMs: 0,
+      fetchTtlSeconds: -1, verbose: false,
     },
     anysearch: {
       enabled: true, apiKey: '', baseURL: '', tag: '', params: '', zone: '', language: '', maxResults: 10, verbose: false,
@@ -318,7 +319,8 @@ await check('every documented API parameter has a form field', () => {
   // "supports the API's parameters" requirement untrue.
   const tinyfish = ['searchBaseURL', 'fetchBaseURL', 'purpose', 'language', 'location', 'domainType',
     'includeDomains', 'excludeDomains', 'afterDate', 'beforeDate', 'recencyMinutes', 'pubYearMin',
-    'pubYearMax', 'maxPages', 'fetchFormat', 'fetchLinks', 'verbose']
+    'pubYearMax', 'maxPages', 'fetchFormat', 'fetchLinks', 'fetchImageLinks', 'fetchPerUrlTimeoutMs',
+    'fetchTtlSeconds', 'verbose']
   const anysearch = ['baseURL', 'tag', 'params', 'zone', 'language', 'maxResults', 'verbose']
   for (const key of tinyfish) {
     assert.ok(SOURCE.includes(`key: '${key}'`), `tinyfish field "${key}" is missing from the card`)

@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The TinyFish fetch path now exposes every parameter the API accepts.** Four
+  were supported by the transport but absent from the config schema, so the
+  READMEs' "supports the API's parameters" claim was not yet true:
+  - `tinyfish.fetchImageLinks` — `image_links`, return the page's image URLs.
+  - `tinyfish.fetchPerUrlTimeoutMs` — `per_url_timeout_ms`; `0` (default) omits
+    the field, otherwise the service's `1`–`110000` window applies.
+  - `tinyfish.fetchTtlSeconds` — `ttl`, **tri-state** because the service does:
+    `-1` (default) omits the field and accepts any cached entry, `0` forces a
+    live fetch, and `N` accepts a cache entry younger than `N` seconds.
+    Collapsing the omitted and live cases onto one value would silently turn
+    every fetch live.
+  - `tinyfish.purpose` is now also sent on the **fetch** path, not only search.
+- `tinyfish.purpose` **defaults to a non-empty intent hint**
+  (`Gather current, citable web sources to answer a user question`). TinyFish
+  documents `purpose` as the "why" behind a request — the task the results feed
+  — and an agent-facing `web_search`/`web_fetch` always has that intent, which a
+  bare keyword query or URL cannot express. Everyone else in the group is left
+  as-is, so the only behaviour change on a default install is the added hint
+  (and clearing the field restores the service's own default ranking).
+- The settings card gains fields for the four new fetch controls, and the
+  system-prompt note now reports the fetch-path configuration alongside search
+  scoping, so the model is told what is actually in force.
+- Verification coverage for the new surface: the transport-level `ttl`
+  sentinel, the config-to-wire path for fetch controls through
+  `BackendRuntime.fetch`, and an end-to-end check on a real Cordis context that
+  the shipped `purpose` default reaches both the search query string and the
+  fetch body. `verify.mjs` 80 → 84 checks, `verify-integration.mjs` 24 → 25.
+
 ### Fixed
 
 - **The "Test the chain" result reported `耗时 undefinedms`.** The `/test`

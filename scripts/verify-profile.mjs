@@ -228,6 +228,15 @@ await check('the bundle row config carries the documented defaults', () => {
   assert.equal(config.failover, true)
   assert.equal(config.fetchBackend, 'auto')
   assert.equal(config.takeOverSearch, true)
+  // The fetch-path defaults this release adds. Asserted against the INSTALLED
+  // patch (not the source schema) so a deploy that ships a stale
+  // cordis.patch.yml is caught here rather than by an operator wondering why a
+  // documented default is absent from their profile.
+  assert.equal(typeof config.tinyfish?.purpose, 'string')
+  assert.ok(config.tinyfish.purpose.length > 0, 'purpose ships non-empty')
+  assert.equal(config.tinyfish.fetchImageLinks, false)
+  assert.equal(config.tinyfish.fetchPerUrlTimeoutMs, 0)
+  assert.equal(config.tinyfish.fetchTtlSeconds, -1, '-1 means "omit ttl", never "force live"')
 })
 
 /* -------------------------------------------------------------- user layer */

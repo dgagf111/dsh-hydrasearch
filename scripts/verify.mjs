@@ -261,6 +261,43 @@ await check('fetch posts the URL list and reads markdown back', async () => {
   assert.equal(out.title, 'A')
 })
 
+await check('fetch forwards the optional purpose/image/timeout/ttl controls', async () => {
+  const fetchImpl = stubFetch([{ status: 200, body: {
+    results: [{ url: 'https://a.test/1', final_url: 'https://a.test/1', title: 'A', text: '# Hello', format: 'markdown' }],
+    errors: [],
+  } }])
+  await tf.fetchTinyfish('https://a.test/1', 'sk-test', undefined, { fetch: fetchImpl }, {
+    format: 'markdown',
+    purpose: 'compare vendor pricing',
+    imageLinks: true,
+    perUrlTimeoutMs: 45000,
+    // 0 is meaningful here ("force a live fetch"), so it must reach the wire.
+    ttl: 0,
+  })
+  assert.deepEqual(JSON.parse(fetchImpl.calls[0].init.body), {
+    urls: ['https://a.test/1'],
+    format: 'markdown',
+    purpose: 'compare vendor pricing',
+    image_links: true,
+    per_url_timeout_ms: 45000,
+    ttl: 0,
+  })
+})
+
+// The service distinguishes an ABSENT `ttl` ("accept any cached entry") from an
+// explicit `0` ("force a live fetch"). Collapsing the two would silently turn
+// every fetch live, so the sentinel must survive as an omitted field.
+await check('fetch omits ttl when it is negative and keeps 0 as force-live', async () => {
+  const fetchImpl = stubFetch([
+    { status: 200, body: { results: [{ url: 'https://a.test/1', text: 'x', format: 'markdown' }], errors: [] } },
+    { status: 200, body: { results: [{ url: 'https://a.test/1', text: 'x', format: 'markdown' }], errors: [] } },
+  ])
+  await tf.fetchTinyfish('https://a.test/1', 'k', undefined, { fetch: fetchImpl }, { ttl: -1 })
+  await tf.fetchTinyfish('https://a.test/1', 'k', undefined, { fetch: fetchImpl }, { ttl: 0 })
+  assert.equal('ttl' in JSON.parse(fetchImpl.calls[0].init.body), false, '-1 must omit ttl entirely')
+  assert.equal(JSON.parse(fetchImpl.calls[1].init.body).ttl, 0, '0 must be sent as a live fetch')
+})
+
 await check('fetch reports the per-URL service error when present', async () => {
   const fetchImpl = stubFetch([{ status: 200, body: {
     results: [],
@@ -711,6 +748,13 @@ await check('the config schema fills every default, including nested backends', 
   assert.equal(resolved.tinyfish.maxPages, 3)
   assert.equal(resolved.tinyfish.fetchFormat, 'markdown')
   assert.equal(resolved.tinyfish.recencyMinutes, 0)
+  // The fetch-path defaults TinyFish documents but the schema used to omit.
+  // `purpose` is deliberately NON-empty out of the box; `fetchTtlSeconds` uses
+  // -1 as "omit the field", which must not collapse onto 0 ("force live").
+  assert.equal(resolved.tinyfish.purpose, 'Gather current, citable web sources to answer a user question')
+  assert.equal(resolved.tinyfish.fetchImageLinks, false)
+  assert.equal(resolved.tinyfish.fetchPerUrlTimeoutMs, 0)
+  assert.equal(resolved.tinyfish.fetchTtlSeconds, -1)
   assert.equal(resolved.anysearch.enabled, true)
   assert.equal(resolved.anysearch.maxResults, 10)
   assert.equal(resolved.anysearch.tag, '')
@@ -756,6 +800,9 @@ await check('the config validation rejects malformed values', () => {
     [{ tinyfish: { maxPages: 0 } }, /maxPages/],
     [{ tinyfish: { maxPages: 99 } }, /maxPages/],
     [{ tinyfish: { fetchFormat: 'pdf' } }, /fetchFormat/],
+    [{ tinyfish: { fetchPerUrlTimeoutMs: 110001 } }, /fetchPerUrlTimeoutMs/],
+    [{ tinyfish: { fetchPerUrlTimeoutMs: -5 } }, /fetchPerUrlTimeoutMs/],
+    [{ tinyfish: { fetchTtlSeconds: -2 } }, /fetchTtlSeconds/],
     [{ tinyfish: { afterDate: '2026/01/01' } }, /afterDate/],
     [{ anysearch: { maxResults: 50 } }, /maxResults/],
     [{ anysearch: { params: '{not json' } }, /params must be a JSON object/],
@@ -917,6 +964,57 @@ await check('fetchBackend pins web_fetch to one backend', async () => {
     assert.equal(out.body.kind, 'text')
     assert.equal(out.body.content, 'anysearch body')
     assert.equal(new URL(fetchImpl.calls[0].url).origin, 'https://api.anysearch.com')
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+// The point of exposing these on the schema is that they reach the wire: a
+// default that the runtime drops would look configured in the card and do
+// nothing. Asserted through BackendRuntime.fetch, not the transport directly.
+await check('the tinyfish fetch controls on the config reach the wire', async () => {
+  const original = globalThis.fetch
+  const fetchImpl = stubFetch([{ status: 200, body: {
+    results: [{ url: 'https://a.test/1', final_url: 'https://a.test/1', title: 'A', text: '# Hello', format: 'markdown' }],
+    errors: [],
+  } }])
+  globalThis.fetch = fetchImpl
+  try {
+    await backend('tinyfish', {
+      apiKey: 'sk-test',
+      purpose: 'compare vendor pricing',
+      fetchImageLinks: true,
+      fetchPerUrlTimeoutMs: 45000,
+      fetchTtlSeconds: 0,
+    }).fetch({ url: 'https://a.test/1' })
+    const body = JSON.parse(fetchImpl.calls[0].init.body)
+    assert.equal(body.purpose, 'compare vendor pricing')
+    assert.equal(body.image_links, true)
+    assert.equal(body.per_url_timeout_ms, 45000)
+    assert.equal(body.ttl, 0)
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+await check('the default tinyfish fetch sends purpose but omits timeout and ttl', async () => {
+  // Out of the box: `purpose` is non-empty by design, while the two numeric
+  // controls stay at their "omit the field" sentinels (0 and -1). A future
+  // change that collapses `fetchTtlSeconds` onto 0 would turn every fetch live
+  // and silently stop accepting cached entries — this catches that.
+  const original = globalThis.fetch
+  const fetchImpl = stubFetch([{ status: 200, body: {
+    results: [{ url: 'https://a.test/1', text: '# Hello', format: 'markdown' }],
+    errors: [],
+  } }])
+  globalThis.fetch = fetchImpl
+  try {
+    await backend('tinyfish', { apiKey: 'sk-test' }).fetch({ url: 'https://a.test/1' })
+    const body = JSON.parse(fetchImpl.calls[0].init.body)
+    assert.equal(body.purpose, 'Gather current, citable web sources to answer a user question')
+    assert.equal('per_url_timeout_ms' in body, false, '0 must omit per_url_timeout_ms')
+    assert.equal('ttl' in body, false, '-1 must omit ttl')
+    assert.equal('image_links' in body, false, 'image_links is off by default')
   } finally {
     globalThis.fetch = original
   }

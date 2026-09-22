@@ -244,6 +244,24 @@ await check('ctx.web.fetch() returns the seam body shape', async () => {
   assert.equal(new URL(fetchCalls.at(-1).url).hostname, 'api.fetch.tinyfish.ai')
 })
 
+await check('the default purpose reaches the wire on both search and fetch', async () => {
+  // The defaulting happens in the schema, and the forwarding happens in
+  // BackendRuntime. Only an end-to-end call through the real seam proves BOTH
+  // halves agree — a schema default the runtime never reads would look set in
+  // the card and send nothing.
+  const expected = plugin.Config({}).tinyfish.purpose
+  assert.ok(expected.length > 0, 'the shipped default must be non-empty')
+
+  await ctx.web.search({ query: 'purpose provenance', maxResults: 1 })
+  const searchUrl = fetchCalls.filter((call) => call.url.hostname === 'api.search.tinyfish.ai').at(-1).url
+  assert.equal(searchUrl.searchParams.get('purpose'), expected)
+
+  fetchCalls.length = 0
+  await ctx.web.fetch({ url: 'https://tf.test/1' })
+  const fetchBody = JSON.parse(fetchCalls.at(-1).init.body)
+  assert.equal(fetchBody.purpose, expected, 'the fetch path must honour purpose too')
+})
+
 await check('the plugin contributed a system-prompt section naming both backends', async () => {
   // `assemble()` is the real public surface: it runs every registered section
   // and returns the prompt the model would receive. Asserting on it proves the
