@@ -17,21 +17,14 @@
 
 ## 它做什么
 
-插件向 `ctx.web` 注册三个 provider：
-
-| provider id | 行为 |
-| --- | --- |
-| `hydrasearch` | **故障切换链**：按 `priority` 顺序依次尝试，失败自动切下一个。默认指向它。 |
-| `tinyfish` | 只用 TinyFish，不切换 |
-| `anysearch` | 只用 AnySearch，不切换 |
-
-三个都注册，所以既可以用链（默认），也可以把 `web.searchProvider` 改成 `tinyfish` 或 `anysearch` 精确钉死一个后端——**不需要卸载插件**。
+插件只向 `ctx.web` 注册**一个** provider —— `hydrasearch`，同时承担 search 与 fetch。两个后端的全部逻辑都封闭在它内部：故障切换链、各自的参数、凭据解析、配置卡片。TinyFish 与 AnySearch 对 seam 不可见。
 
 实际生效的能力：
 
 - `web_search` → 按优先级依次尝试两个后端，返回归一化的 `{url, title, snippet, publishedAt}`
-- `web_fetch` → 同上（可用 `fetchBackend` 单独钉死一个后端）
+- `web_fetch` → 同上
 - 插件页配置卡片：拖动优先级、填 key、调每个后端的全部 API 参数
+- 要把某个能力钉死在单一后端，用 `searchBackend` / `fetchBackend`（默认 `auto` 即走链）
 
 ---
 
@@ -53,6 +46,8 @@ $node = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\nod
     searchProvider: hydrasearch
     fetchProvider: hydrasearch
 ```
+
+> 插件只注册 `hydrasearch` 这一个 id，所以这里没有别的可选值。要换后端请改 `searchBackend` / `fetchBackend`，而不是改 provider。
 
 重启 DeepSeek Harness，然后打开 **插件页 → 已安装 → `dsh-hydrasearch` → 行内配置入口**。
 
@@ -93,6 +88,8 @@ tinyfish auth login          # 写入 ~/.tinyfish/config.json
 
 关闭 `failover` 后只使用顺序里第一个可用后端，它的失败就是最终结果。全部失败时抛**第一个**失败（让运维看到根因），不合成模糊的聚合错误。
 
+要把某个能力完全钉死在一个后端（不参与切换），把 `searchBackend` / `fetchBackend` 从 `auto` 改成后端 id 即可。填了不存在的 id 会退回正常的链式遍历，不会让能力失效。
+
 ---
 
 ## 配置
@@ -107,7 +104,8 @@ tinyfish auth login          # 写入 ~/.tinyfish/config.json
 | `failover` | `true` | 失败时是否切下一个 |
 | `takeOverSearch` | `true` | 组合未指定 `web.searchProvider` 时接管 |
 | `takeOverFetch` | `true` | 同上，针对 fetch |
-| `fetchBackend` | `auto` | `auto` 跟随优先级，或钉死某个后端 id |
+| `searchBackend` | `auto` | `auto` 跟随优先级，或钉死某个后端 id |
+| `fetchBackend` | `auto` | 同上，针对 `web_fetch` |
 
 ### TinyFish（`tinyfish.*`）
 
@@ -190,7 +188,7 @@ npm run deploy              # 部署进 profile
 ```
 dsh-hydrasearch/
 ├── lib/
-│   ├── index.js      # 插件主体：三个 provider、故障切换链、settings、bridge 路由、系统提示
+│   ├── index.js      # 插件主体：hydrasearch provider、故障切换链、settings、bridge 路由、系统提示
 │   ├── tinyfish.js   # TinyFish transport
 │   ├── anysearch.js  # AnySearch transport
 │   └── client.js     # 浏览器半：优先级拖动 + 各后端参数表单（无需构建）

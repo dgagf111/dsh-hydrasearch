@@ -880,38 +880,67 @@ await check('the chain reports unavailable when no backend can run', async () =>
   }
 })
 
-await check('all three providers register into a real WebRuntime', async () => {
+await check('the plugin registers exactly ONE provider for both capabilities', async () => {
+  // The contract this refactor exists to establish: the seam sees a single id,
+  // so an unset `web.searchProvider` is unambiguous and the operator never has
+  // to name a backend to get search working. Backend choice stays internal.
   const runtime = await mountWeb()
-  runtime.registerSearchProvider(chain())
-  runtime.registerSearchProvider(new plugin.SingleBackendProvider('tinyfish', backend('tinyfish', { apiKey: 'sk-test' })))
-  runtime.registerSearchProvider(new plugin.SingleBackendProvider('anysearch', backend('anysearch', { apiKey: 'k' })))
-  assert.equal(runtime.searchProviders.size, 3)
-  assert.ok(runtime.searchProviders.has('hydrasearch'))
-  assert.ok(runtime.searchProviders.has('tinyfish'))
-  assert.ok(runtime.searchProviders.has('anysearch'))
+  const provider = chain()
+  runtime.registerSearchProvider(provider)
+  runtime.registerFetchProvider(provider)
+  assert.equal(runtime.searchProviders.size, 1, 'exactly one search provider must be registered')
+  assert.equal(runtime.fetchProviders.size, 1, 'exactly one fetch provider must be registered')
+  assert.ok(runtime.searchProviders.has(plugin.HYDRASEARCH_PROVIDER_ID))
+  assert.ok(runtime.fetchProviders.has(plugin.HYDRASEARCH_PROVIDER_ID))
+  assert.equal(runtime.searchProviders.has(plugin.TINYFISH_ID), false, 'backends must NOT be registered as providers')
+  assert.equal(runtime.searchProviders.has(plugin.ANYSEARCH_ID), false, 'backends must NOT be registered as providers')
 
-  // With three usable providers registered, an UNSET selection is correctly
-  // ambiguous — the seam refuses to guess. Pinning one id is what resolves it,
-  // which is the documented reason the two single-backend providers exist.
+  // A single candidate is unambiguous: the seam resolves it without any
+  // explicit selection, which is what makes the one-provider shape work.
   assert.equal(runtime.searchProviderId, undefined)
-  await assert.rejects(
-    () => runtime.search({ query: 'q', maxResults: 1 }),
-    (error) => error.code === 'WEB_PROVIDER_AMBIGUOUS',
-  )
+  const original = globalThis.fetch
+  globalThis.fetch = stubFetch([page([result('https://a.test/1')])])
+  try {
+    const searched = await runtime.search({ query: 'q', maxResults: 1 })
+    assert.equal(searched.sources[0].url, 'https://a.test/1')
+  } finally {
+    globalThis.fetch = original
+  }
+})
 
-  runtime.searchProviderId = 'anysearch'
+await check('pinning a backend is config, not registration', async () => {
+  // `searchBackend` / `fetchBackend` replaced the old "register each backend as
+  // a provider and repoint web.searchProvider at it" design.
+  const pinned = chain({ priority: ['anysearch', 'tinyfish'], searchBackend: 'anysearch' })
   const original = globalThis.fetch
   const fetchImpl = stubFetch([envelope([asResult('https://as.test/1')])])
   globalThis.fetch = fetchImpl
   try {
-    // Pin-to-anysearch goes straight to that backend: the contract behind
-    // `web.searchProvider: anysearch`.
-    const pinned = await runtime.search({ query: 'q', maxResults: 1 })
-    assert.equal(pinned.sources[0].url, 'https://as.test/1')
+    const result = await pinned.search({ query: 'q', maxResults: 1 })
+    assert.equal(result.sources[0].url, 'https://as.test/1', 'the pinned backend must serve the search')
     assert.equal(new URL(fetchImpl.calls[0].url).origin, 'https://api.anysearch.com')
+    // Pinning bypasses the chain entirely: TinyFish is first in `priority` and
+    // must not be called, so exactly one request was made.
+    assert.equal(fetchImpl.calls.length, 1, 'a pinned search must not try the other backend')
   } finally {
     globalThis.fetch = original
   }
+})
+
+await check('an unknown pin degrades to the chain instead of breaking search', async () => {
+  // A typo in the card (or a stale value naming a removed backend) must not make
+  // the capability unreachable — it falls back to the normal chain walk.
+  const provider = chain({ tinyfish: { apiKey: 'sk-test' } })
+  const original = globalThis.fetch
+  globalThis.fetch = stubFetch([page([result('https://a.test/1')])])
+  try {
+    const result = await provider.search({ query: 'q' })
+    assert.equal(result.sources[0].url, 'https://a.test/1')
+  } finally {
+    globalThis.fetch = original
+  }
+  assert.deepEqual(provider.pinnedOrChain('not-a-backend').map((b) => b.id), ['tinyfish', 'anysearch'])
+  assert.deepEqual(provider.pinnedOrChain('auto').map((b) => b.id), ['tinyfish', 'anysearch'])
 })
 
 await check('over-returning sources are capped and flagged by the seam', async () => {
@@ -933,7 +962,7 @@ await check('over-returning sources are capped and flagged by the seam', async (
 
 await check('a duplicate provider id is rejected by the registry', async () => {
   const runtime = await mountWeb()
-  const provider = new plugin.SingleBackendProvider('tinyfish', backend('tinyfish', { apiKey: 'sk-test' }))
+  const provider = chain()
   runtime.registerSearchProvider(provider)
   assert.throws(() => runtime.registerSearchProvider(provider), (error) => error.code === 'WEB_DUPLICATE_PROVIDER')
   runtime.registerFetchProvider(provider)

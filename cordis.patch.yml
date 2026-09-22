@@ -64,7 +64,10 @@
         failover: true
         takeOverSearch: true
         takeOverFetch: true
-        # 'auto' follows `priority`; otherwise pin one backend id for web_fetch.
+        # 'auto' follows `priority`; otherwise pin one backend id.
+        # Pinning is config-only: the plugin registers a single provider, so
+        # these two selectors are how you bypass the chain.
+        searchBackend: auto
         fetchBackend: auto
 
         tinyfish:

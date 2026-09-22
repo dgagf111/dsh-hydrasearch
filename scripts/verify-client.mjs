@@ -212,7 +212,7 @@ function describeReply(overrides = {}) {
       writable: true,
       version: '0.2.0',
       providerIds: { search: 'hydrasearch', fetch: 'hydrasearch' },
-      chain: { providerId: 'hydrasearch', priority: ['tinyfish', 'anysearch'], backends: ['tinyfish', 'anysearch'], failover: true, fetchBackend: 'auto' },
+      chain: { providerId: 'hydrasearch', priority: ['tinyfish', 'anysearch'], backends: ['tinyfish', 'anysearch'], failover: true, searchBackend: 'auto', fetchBackend: 'auto' },
       credentials: {
         tinyfish: { ref: 'TINYFISH_API_KEY', envVar: 'TINYFISH_API_KEY', configured: false, writable: true, available: true, fromConfig: false },
         anysearch: { ref: 'ANYSEARCH_API_KEY', envVar: 'ANYSEARCH_API_KEY', configured: false, writable: true, available: true, fromConfig: false },
@@ -333,6 +333,20 @@ await check('per-backend writes are addressed by a two-segment path', () => {
   // tinyfish.language must never restate (and therefore clobber) anysearch.
   assert.match(SOURCE, /path: \[id, field\.key\]/, 'backend fields must use a [backendId, fieldKey] path')
   assert.match(SOURCE, /path: \[id, 'enabled'\]/, 'the enabled flag must be per-backend too')
+})
+
+await check('both capabilities expose a backend pin selector', () => {
+  // Pinning used to work by repointing `web.searchProvider` at a separately
+  // registered backend provider. Now that one provider serves everything, the
+  // card is the ONLY way to bypass the chain — so both selectors must exist and
+  // both must be persisted as their own path op.
+  assert.match(SOURCE, /searchBackend: 'web_search/, 'the search pin label is missing')
+  assert.match(SOURCE, /fetchBackend: 'web_fetch/, 'the fetch pin label is missing')
+  assert.match(SOURCE, /path: \['searchBackend'\]/, 'the search pin must be persisted as its own path op')
+  assert.match(SOURCE, /path: \['fetchBackend'\]/, 'the fetch pin must be persisted as its own path op')
+  // A pin can only name a backend the chain still has, so the options are built
+  // from the live priority list rather than hard-coded.
+  assert.match(SOURCE, /draft\.priority\.map\(\(id\) => jsx\.jsx\('option'/, 'pin options must come from priority')
 })
 
 await check('the credential routes carry the backend discriminator', () => {

@@ -390,13 +390,13 @@ await check('no duplicate row ids were composed', () => {
   }
 })
 
-await check('the provider ids are distinct from the official ones', async () => {
+await check('the registered provider id is distinct from the official ones', async () => {
   const entry = path.join(resolveInstalled(), 'lib', 'index.js')
   const mod = await import(`${new URL(`file://${entry.replace(/\\/g, '/')}`)}?t=${Date.now()}`)
   const official = new Set(['deepseek-official', 'exa', 'perplexity'])
-  for (const id of [mod.HYDRASEARCH_PROVIDER_ID, mod.TINYFISH_ID, mod.ANYSEARCH_ID]) {
-    assert.equal(official.has(id), false, `provider id "${id}" collides with a shipped provider`)
-  }
+  // Only the ONE registered id has to avoid a collision. The backend ids are no
+  // longer registered as providers, so they are free to be named anything.
+  assert.equal(official.has(mod.HYDRASEARCH_PROVIDER_ID), false, 'the provider id collides with a shipped provider')
 })
 
 console.log(`\n${checks - failures}/${checks} checks passed`)

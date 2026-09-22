@@ -17,21 +17,14 @@ Compatible with **DSH 0.1.6-alpha.2** (`@deepseek-ai/*` 0.1.0-rc.6).
 
 ## What it does
 
-The plugin registers three providers into `ctx.web`:
-
-| provider id | behavior |
-| --- | --- |
-| `hydrasearch` | **Failover chain**: tries each backend in `priority` order and switches to the next on failure. Defaults to this one. |
-| `tinyfish` | TinyFish only, no switchover |
-| `anysearch` | AnySearch only, no switchover |
-
-Because all three are registered, you can either use the chain (the default) or point `web.searchProvider` at `tinyfish` or `anysearch` to pin exactly one backend — **without uninstalling the plugin**.
+The plugin registers exactly **one** provider into `ctx.web` — `hydrasearch` — serving both search and fetch. Everything about the two backends lives inside it: the failover chain, per-backend scoping, credential resolution, and the settings card. TinyFish and AnySearch are invisible to the seam.
 
 What actually takes effect:
 
 - `web_search` → tries both backends in priority order and returns the normalized `{url, title, snippet, publishedAt}`
-- `web_fetch` → same as above (use `fetchBackend` to pin a single backend on its own)
+- `web_fetch` → same as above
 - Plugin page configuration card: drag the priority order, enter keys, tune every API parameter of each backend
+- To pin a capability to a single backend, use `searchBackend` / `fetchBackend` (default `auto` walks the chain)
 
 ---
 
@@ -55,6 +48,8 @@ Then point the web seam at it in the profile's user-layer `cordis.patch.yml`. **
 ```
 
 Restart DeepSeek Harness, then open **Plugins page → Installed → `dsh-hydrasearch` → the row's configure entry**.
+
+> The plugin registers only the `hydrasearch` id, so there is no other value to put here. To change backends, edit `searchBackend` / `fetchBackend`, not the provider.
 
 > `$DSH_HOME` defaults to `%USERPROFILE%\.dsh` on Windows and `~/.dsh` on macOS/Linux; the profile layout is `$DSH_HOME/profiles/<profile>/`. The example above is PowerShell — adapt the path syntax for other shells.
 >
@@ -93,6 +88,8 @@ Two honesty rules:
 
 With `failover` off, only the first available backend is used and its failure is final. When every backend fails, the **first** failure is thrown (so operators see the root cause) rather than a vague aggregate error.
 
+To pin a capability entirely to one backend (no failover), change `searchBackend` / `fetchBackend` from `auto` to a backend id. An unknown id falls back to the normal chain walk rather than making the capability unreachable.
+
 ---
 
 ## Configuration
@@ -107,7 +104,8 @@ Every field is persisted in the `hydrasearch` settings namespace. Each field is 
 | `failover` | `true` | Whether to switch to the next backend on failure |
 | `takeOverSearch` | `true` | Claim the seat when `web.searchProvider` is unset |
 | `takeOverFetch` | `true` | Same, for fetch |
-| `fetchBackend` | `auto` | `auto` follows the priority; or pin one backend id |
+| `searchBackend` | `auto` | `auto` follows the priority; or pin one backend id |
+| `fetchBackend` | `auto` | Same, for `web_fetch` |
 
 ### TinyFish (`tinyfish.*`)
 
@@ -190,7 +188,7 @@ For what each of the four suites covers, the DSH integration traps (bundle insta
 ```
 dsh-hydrasearch/
 ├── lib/
-│   ├── index.js      # Plugin body: the three providers, failover chain, settings, bridge routes, system prompt
+│   ├── index.js      # Plugin body: the hydrasearch provider, failover chain, settings, bridge routes, system prompt
 │   ├── tinyfish.js   # TinyFish transport
 │   ├── anysearch.js  # AnySearch transport
 │   └── client.js     # Browser half: priority dragging + per-backend parameter forms (no build needed)

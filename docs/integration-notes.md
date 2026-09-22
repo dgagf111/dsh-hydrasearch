@@ -101,11 +101,26 @@ provider 如果自己先截断，结果永远 `truncated: false`，**模型就�
 
 profile 的 `- id: web` patch 是**整行替换 config**。只写 `fetchProvider` 会**静默抹掉**原有的 `searchProvider`，搜索就解析不到 provider。
 
-所以插件在 `apply()` 里做兜底：**只有 `ctx.web.searchProviderId` 未定义时才接管**；用户显式配了别的 provider 就不动。要钉死单一后端时，两个 id 一起写。
+所以插件在 `apply()` 里做兜底：**只有 `ctx.web.searchProviderId` 未定义时才接管**；用户显式配了别的 provider 就不动。
+
+### 只注册一个 provider（而不是每个后端一个）
+
+早期版本把 `tinyfish` 和 `anysearch` 也注册成 provider，好让运维把 `web.searchProvider` 指过去"钉死"某个后端。这带来两个问题：
+
+1. **未配置时必然会歧义**。seam 的选择语义是"未配置且恰好一个可用才自动选，多个可用则抛 `WEB_PROVIDER_AMBIGUOUS`"。注册三个 provider 后，只要有两个后端可用，未配置 `web.searchProvider` 就会直接失败——而配置它是运维的额外负担，不是本意。
+2. **后端变成了 seam 层的公民**。provider id 是全局命名空间，两个纯内部实现细节占用它，既可能与别的插件撞名，也把"换后端"这件事错误地表达成了"换 provider"。
+
+现在只注册 `hydrasearch` 一个，钉死后端改由内部配置承担（`searchBackend` / `fetchBackend`，默认 `auto`）。这样：
+
+- 未配置 `web.searchProvider` 时**永远不会歧义**（候选唯一）；
+- 后端的增删完全不影响 seam 可见的 provider 集合；
+- 钉死这件事语义正确——它一直是**配置**问题，不是注册问题。
+
+`pinnedOrChain()` 是唯一的落点：`auto`、未知 id、非法值都退回链式遍历，所以卡片里填错一个 id 只会退化成默认行为，不会让能力失效。
 
 ### `apply()` 的注册顺序是刻意的
 
-三个 provider 的注册放在 `apply()` **最前面**，在任何可能抛错的步骤之前。
+provider 的注册放在 `apply()` **最前面**，在任何可能抛错的步骤之前。
 
 原因：`apply` 抛错会让 Cordis 失败该插件的 fiber，并**回滚这个 fiber 已做的全部 effect 级注册** —— 包括 provider 注册。而 profile 的 `web` 配置指名了 `hydrasearch`，症状就变成"seam 指向一个没人注册的 provider"，真因（端点非法、命名空间冲突）却被埋在后面一行。
 

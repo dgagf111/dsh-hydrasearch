@@ -34,6 +34,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The plugin now registers exactly one provider.** `tinyfish` and `anysearch`
+  are no longer registered as `ctx.web` providers; the single `hydrasearch`
+  provider serves both search and fetch, and both backends are internal to it.
+  This removes a real failure mode: with three providers registered, an unset
+  `web.searchProvider` was ambiguous whenever two backends were usable, so the
+  seam raised `WEB_PROVIDER_AMBIGUOUS` and the operator had to name a provider
+  just to get search working. A single candidate is never ambiguous.
+- Pinning a capability to one backend is now **configuration**
+  (`searchBackend` / `fetchBackend`, both default `auto`) instead of a
+  registration trick that repointed `web.searchProvider` at a backend id. The
+  new `searchBackend` key mirrors the existing `fetchBackend`, and an unknown id
+  degrades to the normal chain walk rather than making the capability
+  unreachable.
+- `SingleBackendProvider` is gone, along with the two extra registrations.
+- The settings card gains a `searchBackend` selector next to `fetchBackend`;
+  both are persisted as their own path ops and offer only backends present in
+  the live priority list.
 - Both READMEs were cut from ~460 lines to ~205 and restructured to match what
   other DSH plugins actually document: what it does, install, priority/failover,
   configuration, API keys, development. The maintainer-facing material — why the

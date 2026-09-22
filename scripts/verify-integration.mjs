@@ -15,7 +15,7 @@
  * What it proves that the other suites do not:
  *
  *   1. `apply()` completes on a real context (its `inject` graph actually
- *      resolves) and registers all three providers.
+ *      resolves) and registers the single hydrasearch provider.
  *   2. A settings write through the bridge persists to disk and is re-read by
  *      the next search — the "persisted and effective without restart" contract.
  *   3. Reordering `priority` through the bridge changes which backend answers,
@@ -184,13 +184,18 @@ const ctx = await mount({
   anysearch: { apiKey: 'as_sk_it' },
 })
 
-await check('apply() completes on a real context and registers all providers', () => {
-  assert.equal(ctx.web.searchProviders.size, 3, `expected 3 search providers, got ${ctx.web.searchProviders.size}`)
-  assert.equal(ctx.web.fetchProviders.size, 3, `expected 3 fetch providers, got ${ctx.web.fetchProviders.size}`)
-  for (const id of ['hydrasearch', 'tinyfish', 'anysearch']) {
-    assert.ok(ctx.web.searchProviders.has(id), `search provider "${id}" is missing`)
-    assert.ok(ctx.web.fetchProviders.has(id), `fetch provider "${id}" is missing`)
-  }
+await check('apply() completes on a real context and registers the single provider', () => {
+  // ONE provider per capability. A second registration would make an unset
+  // `web.searchProvider` ambiguous (WEB_PROVIDER_AMBIGUOUS), so this count is
+  // the load-bearing assertion behind the whole single-provider design.
+  assert.equal(ctx.web.searchProviders.size, 1, `expected 1 search provider, got ${ctx.web.searchProviders.size}`)
+  assert.equal(ctx.web.fetchProviders.size, 1, `expected 1 fetch provider, got ${ctx.web.fetchProviders.size}`)
+  assert.ok(ctx.web.searchProviders.has(plugin.HYDRASEARCH_PROVIDER_ID), 'the hydrasearch search provider is missing')
+  assert.ok(ctx.web.fetchProviders.has(plugin.HYDRASEARCH_PROVIDER_ID), 'the hydrasearch fetch provider is missing')
+  // The backend ids are internal now: registering them would have made the seam
+  // treat them as peer providers.
+  assert.equal(ctx.web.searchProviders.has(plugin.TINYFISH_ID), false, 'a backend must not be a provider')
+  assert.equal(ctx.web.searchProviders.has(plugin.ANYSEARCH_ID), false, 'a backend must not be a provider')
 })
 
 await check('the web seam selects the chain', () => {
@@ -409,11 +414,25 @@ await check('a failing first backend fails over on the real chain', async () => 
   assert.match(result.content, /using anysearch/, 'the note must name the serving backend')
 })
 
-await check('a pinned single backend is reachable through a real context', async () => {
-  const pinned = await mount({ tinyfish: { apiKey: 'sk-x' }, anysearch: { apiKey: 'as_sk_it' } }, { fresh: true })
-  pinned.web.searchProviderId = plugin.ANYSEARCH_ID
+await check('pinning search to one backend works through a real context', async () => {
+  // `searchBackend` is the config-level replacement for the old design that
+  // registered each backend as its own provider. The seam still dispatches to
+  // the single hydrasearch provider; the pin is honoured inside it.
+  const pinned = await mount({
+    priority: ['tinyfish', 'anysearch'],
+    searchBackend: plugin.ANYSEARCH_ID,
+    tinyfish: { apiKey: 'sk-x' },
+    anysearch: { apiKey: 'as_sk_it' },
+  }, { fresh: true })
+  // `fetchCalls` accumulates across every mount in this file, so the proof has
+  // to look only at the calls THIS search made.
+  const before = fetchCalls.length
   const result = await pinned.web.search({ query: 'pinned', maxResults: 2 })
   assert.equal(result.sources[0].url, 'https://as.test/1')
+  // TinyFish is first in priority and would have served this search, so its
+  // absence from this search's calls is the proof the pin took effect.
+  const hosts = fetchCalls.slice(before).map((call) => call.url.hostname)
+  assert.deepEqual(hosts, ['api.anysearch.com'], 'a pinned search must reach only the pinned backend')
 })
 
 await check('a priority reorder survives a full remount', async () => {
