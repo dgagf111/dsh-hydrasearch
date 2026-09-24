@@ -561,6 +561,7 @@ console.log('\ntinyfish providers (seam contract)')
 
 const web = await import('@deepseek-ai/dsh-web')
 const { Context } = await import('@deepseek-ai/cordis')
+const z = (await import('@deepseek-ai/schemastery')).default
 const plugin = await import('../lib/index.js')
 
 /**
@@ -617,14 +618,26 @@ await check('volatile() marks when the runtime can, and passes through when it c
   // exists the marker must land, because 0.1.7's `volatileForm()` omits any
   // entry whose schema lacks it — which presents as a settings page that
   // silently renders nothing, with no error anywhere.
-  const supportsVolatile = typeof plugin.Config.volatile === 'function'
-  const probe = plugin.volatile(plugin.Config)
+  //
+  // Exercise a FRESH schema. `plugin.Config` is already marked at module load,
+  // and schemastery deliberately rejects a second `.volatile()` call; marking it
+  // again tests the dependency's duplicate guard, not the plugin's capability
+  // dispatch.
+  const source = z.object({})
+  const supportsVolatile = typeof source.volatile === 'function'
+  const probe = plugin.volatile(source)
   assert.ok(probe, 'volatile() must return a schema')
 
   if (supportsVolatile) {
     assert.equal(probe.meta?.volatile, true, 'a capable runtime must carry the marker')
+    assert.notEqual(probe, source, 'a capable runtime must return the marked schema')
+    assert.equal(source.meta?.volatile, undefined, 'the source schema must stay untouched')
   } else {
-    assert.equal(probe, plugin.Config, 'an incapable runtime must get the node back unchanged')
+    assert.equal(probe, source, 'an incapable runtime must get the node back unchanged')
+  }
+
+  if (supportsVolatile) {
+    assert.equal(plugin.Config.meta?.volatile, true, 'the plugin Config must carry the marker')
   }
 
   const bare = { notASchema: true }

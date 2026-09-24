@@ -13,12 +13,13 @@ concurrency:
 
 jobs:
   test:
-    name: verify (node ${{ matrix.node }})
+    name: verify (node ${{ matrix.node }}, schemastery ${{ matrix.schemastery }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         node: ['20', '22']
+        schemastery: ['3.18.2', '3.18.4']
 
     steps:
       - uses: actions/checkout@v4
@@ -28,28 +29,17 @@ jobs:
           node-version: ${{ matrix.node }}
 
       - name: Install DSH service modules
-        # These are the packages the plugin resolves at runtime, installed here so
-        # the suites can run WITHOUT a local DSH profile.
+        # Install the legacy DSH service generation exactly, then exercise both
+        # sides of the schemastery compatibility boundary. A floating range used
+        # to make this job change underneath an unchanged commit when a new patch
+        # was published (the 3.18.2 -> 3.18.4 transition exposed exactly that).
         #
-        # Three deliberate choices:
-        #
-        #   1. Exact pins, not carets. The `latest` dist-tag on npm still points
-        #      at 0.0.1-rc.1 for most of the @deepseek-ai/dsh-* family, so a range
-        #      would silently resolve to a generation this plugin was never
-        #      tested against. DSH is in developer preview; a floating range is
-        #      how a green CI starts lying.
-        #   2. rc.6, the generation this plugin targets and the one the desktop
-        #      app ships. The `dsh.*` peer closure below is what makes
-        #      `dsh-web` / `dsh-settings-file` importable at all — each one was
-        #      added because an import actually failed without it.
-        #   3. `--legacy-peer-deps` is required, not cosmetic: the DSH peer graph
-        #      is self-referential across generations (dsh-tools@rc.6 declares a
-        #      peer on dsh-agent@^0.1.0-rc.6, whose own peer chain pulls rc.8), so
-        #      npm's strict resolver reports ERESOLVE even though every package
-        #      involved is published and installable.
+        # `--legacy-peer-deps` remains required: the DSH peer graph is
+        # self-referential across generations, so npm's strict resolver reports
+        # ERESOLVE even though every package involved is published/installable.
         run: |
           npm install --no-audit --no-fund --legacy-peer-deps \
-            @deepseek-ai/cordis@^4.0.1 \
+            @deepseek-ai/cordis@4.0.1 \
             @deepseek-ai/dsh-app-boot@0.1.0-rc.6 \
             @deepseek-ai/dsh-atomic-write@0.1.0-rc.6 \
             @deepseek-ai/dsh-credentials@0.1.0-rc.6 \
@@ -64,9 +54,9 @@ jobs:
             @deepseek-ai/dsh-timeout@0.1.0-rc.6 \
             @deepseek-ai/dsh-tools@0.1.0-rc.6 \
             @deepseek-ai/dsh-web@0.1.0-rc.6 \
-            @deepseek-ai/schemastery@^3.18.2 \
-            react@^18.3.1 \
-            react-dom@^18.3.1
+            @deepseek-ai/schemastery@${{ matrix.schemastery }} \
+            react@18.3.1 \
+            react-dom@18.3.1
 
       - name: Server-side unit checks
         # The live-network section self-skips when no API key is present, so this

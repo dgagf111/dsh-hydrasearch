@@ -74,7 +74,8 @@
     "compatibility": {
       "dshReleases": {
         "0.1.6-alpha.2": "compatible",
-        "0.1.7-alpha.1": "compatible"
+        "0.1.7-alpha.1": "compatible",
+        "0.1.7-rc.1": "compatible"
       }
     }
   },
@@ -99,7 +100,7 @@
     "@deepseek-ai/dsh-timeout": "0.1.0-rc.6",
     "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
     "@deepseek-ai/dsh-web": "0.1.0-rc.6",
-    "@deepseek-ai/schemastery": "^3.18.2",
+    "@deepseek-ai/schemastery": "3.18.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   }
