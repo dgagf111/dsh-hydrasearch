@@ -182,6 +182,49 @@ export function isVolatileRef(value) {
 }
 ```
 
+### 反向陷阱：注册代会把 volatile schema 存成 ref
+
+上面那条「根标记覆盖全部字段」的策略，在**注册代**（rc 的 `register`、0.1.6 的 `installSection`）
+上会反过来咬人 —— 因为这两个服务**自己解析 schema 并把结果存下来**：
+
+```js
+// dsh-settings 的 SettingsProvider.resolve()
+registration.resolved = deepFreeze(this.resolve(schema, base, this.section(ns), validate))
+//                          └─ resolve() 内部就是 schema(mergeLayers(base, section))
+```
+
+把打了 volatile 的 `Config` 交给它，存下来的就是**一个 cordis ref**。后果是静默且成片的：
+
+| 读取方 | 期望 | 实际 |
+| --- | --- | --- |
+| `settings.get(ns).priority` | `['tinyfish','anysearch']` | `undefined`（ref 没有自有字段） |
+| `describe().value` | 卡片可渲染的普通 section | ref，卡片渲染为空 |
+| `validate` 钩子 | 拿到完整 section | 拿到 ref，`cfg.tinyfish` 是 `undefined`，于是**所有校验静默通过** |
+
+症状是「搜索照常可用，但配置卡片空、校验形同虚设，且任何地方都不报错」。
+它只在**新版 schemastery（≥3.18.3，`.volatile()` 真的生效）配旧版 settings 服务**时出现 ——
+也就是 3.18.2 时代从未暴露，直到 npm 把 `^3.18.2` 解析到 3.18.4 才在 CI 上现形。
+
+修法：**只在这两个自解析分支上，换成去掉根标记的孪生 schema**。
+
+```js
+export function registrationSafeSchema(schema) {
+  if (schema === null || typeof schema !== 'function' || schema.meta?.volatile !== true) return schema
+  const copy = z(schema)          // schemastery 自己的复制惯例（.extra()/.required() 同款）
+  const meta = { ...schema.meta }
+  delete meta.volatile
+  copy.meta = meta
+  return copy
+}
+```
+
+要点：
+
+- **只去根标记**。嵌套的 `tinyfish` / `anysearch` 本来就没标记，不会再有节点变成 ref。
+- **必须复制，不能原地改**。`Config` 同时是 loader entry 的 schema，0.1.7 的 `volatileForm()`
+  要读那个标记；原地删掉会把 0.1.7 的卡片一起弄没。
+- **第 3 个分支（`SettingsForms`）继续拿带标记的原件** —— 它从不调用 schema，只读 `meta.volatile`。
+
 ### 三个分支缺一不可
 
 `installSettingsSection` 现在按**能力**（而非版本号）分派，这样未来某个树保留任一旧方法仍然走得通：

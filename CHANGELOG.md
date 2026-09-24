@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`scripts/verify-workflow.mjs` validates the CI file itself.** The workflow is
+  the only place the supported-generation matrix is declared, and a mistake there
+  is invisible until GitHub runs it — which is how both of this release's CI
+  failures happened. The script asserts exact pins only (no `^`/`~` on any
+  `@deepseek-ai/*`, `react`, or `react-dom` entry), the four-generation matrix,
+  the conditional `dsh-settings-file` install, and that the two suites needing a
+  file-backed settings service carry their `settingsFile` gate. It parses the YAML
+  when the `yaml` package resolves and falls back to structural checks otherwise,
+  so it cannot itself become a new way for the suite to fail on a different tree.
+  Wired into `npm run verify:all` and into CI as its own step.
 - **The TinyFish fetch path now exposes every parameter the API accepts.** Four
   were supported by the transport but absent from the config schema, so the
   READMEs' "supports the API's parameters" claim was not yet true:
@@ -60,12 +70,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing and every save would throw. One root mark covers every present and
   future field, and keeps the nested backend schemas plain so
   `TinyfishConfig({})` still returns a section rather than a ref.
-- `verify.mjs` gains a `release-compatibility contract` block (7 checks, 84 →
-  91) that fails if any of the three shims is removed. All of them were confirmed
-  to fail against the previous revision of `lib/index.js`.
+- `verify.mjs` gains a `release-compatibility contract` block that fails if any
+  of the three shims is removed. All of them were confirmed to fail against the
+  previous revision of `lib/index.js`. It now holds 10 checks (84 → 94 in the
+  suite overall): the fresh-schema marker test, `registrationSafeSchema`
+  coverage (copy-not-mutate, marker removal, defaults still resolve, marker-free
+  input passes through), and the assertion that BOTH self-resolving branches
+  receive the unmarked twin.
 
 ### Fixed
 
+- **A volatile-marked `Config` broke the settings card on the registration
+  generation.** `SettingsProvider.register` (rc line) and
+  `settings.installSection` (0.1.6-alpha.2) resolve the schema themselves and
+  STORE the result (`registration.resolved = schema(mergeLayers(base, section))`).
+  A volatile node returns a cordis REF when called, so those services stored a
+  ref: `settings.get(ns).priority` was `undefined`, `describe()` handed the card
+  a ref it rendered as empty, and the `validate` hook received a ref — so
+  `validateConfig` saw no `tinyfish` / `anysearch` section and **every malformed
+  value passed**. The visible symptom was a working search tool with a dead
+  configuration card and unenforced validation, and nothing logged anywhere.
+  New `registrationSafeSchema()` derives an unmarked twin (schemastery's own
+  `z(schema)` copy idiom, root marker removed) and `installSettingsSection`
+  passes it to the two self-resolving branches only. The `SettingsForms`
+  generation keeps the marked original, because it reads `meta.volatile` and
+  never calls the schema. Only the ROOT is unmarked; the nested backend schemas
+  were never marked, so no descendant can become a ref.
+  The bug only appears when a marker-capable schemastery (>= 3.18.3) is paired
+  with a registration-generation settings service — which is exactly what CI
+  resolves from the `^3.18.2` range, and why the 3.18.2-only era never saw it.
+- **CI was not pinned, so a dependency release could redden an unchanged
+  commit.** The install step used `@deepseek-ai/schemastery@^3.18.2`, so the
+  3.18.2 -> 3.18.4 publication changed what CI tested without any code change.
+  The range is now an explicit two-entry matrix (`3.18.2` = the desktop build's
+  marker-less release, `3.18.4` = the current marker-capable one) and every other
+  install entry is exact too (`@deepseek-ai/cordis@4.0.1`, `react@18.3.1`).
+- **A release-compatibility check tested the dependency, not the plugin.**
+  `volatile() marks when the runtime can...` re-marked `plugin.Config`, which is
+  already marked at module load; schemastery deliberately rejects a second
+  `.volatile()` call (`volatile schema is already wrapped`), so the check began
+  failing the moment a marker-capable version was installed. It now marks a fresh
+  schema, asserts the source node is untouched, and separately asserts that
+  `Config` itself carries the marker.
+- `verify.mjs`'s `release-compatibility contract` block grows to 10 checks: the
+  fresh-schema marker test plus `registrationSafeSchema` coverage (copy-not-mutate,
+  marker removal, defaults still resolve, marker-free input passes through) and
+  the assertion that BOTH self-resolving branches receive the unmarked twin.
+  94/94 checks locally; the integration suite is green on all three generations
+  (rc.6, 0.1.6-alpha.2, 0.1.7-rc.1).
 - **The "Test the chain" result reported `耗时 undefinedms`.** The `/test`
   bridge route's probe objects are built by hand, and neither `singleProbe` nor
   `chainProbe` copied `latencyMs` off the backend result — so every *successful*

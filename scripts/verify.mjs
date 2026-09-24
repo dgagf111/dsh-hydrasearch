@@ -637,11 +637,50 @@ await check('volatile() marks when the runtime can, and passes through when it c
   }
 
   if (supportsVolatile) {
-    assert.equal(plugin.Config.meta?.volatile, true, 'the plugin Config must carry the marker')
+    assert.equal(plugin.Config.meta?.volatile, true, 'the plugin Config must carry the marker on a capable runtime')
+  } else {
+    assert.equal(plugin.Config.meta?.volatile, undefined, 'an incapable runtime must leave Config unmarked')
   }
 
   const bare = { notASchema: true }
   assert.equal(plugin.volatile(bare), bare, 'a node without .volatile() passes through')
+})
+
+await check('registrationSafeSchema strips the marker for self-resolving settings services', () => {
+  // The rc line's `SettingsProvider.register` (and 0.1.6's `installSection`)
+  // resolve the schema themselves and STORE the result:
+  //   registration.resolved = schema(mergeLayers(base, section))
+  // A volatile-marked node returns a cordis REF there, so `settings.get(ns)`
+  // would hand back a ref whose `.priority` / `.tinyfish` are `undefined` — a
+  // working search tool with a dead card and unenforced validation.
+  //
+  // On a runtime without `.volatile()` there is nothing to strip, so the node
+  // must come back unchanged; that branch is what keeps this check honest on
+  // schemastery 3.18.1/3.18.2 as well as 3.18.3+.
+  const base = z.object({ a: z.boolean().default(true) })
+  const supportsVolatile = typeof base.volatile === 'function'
+
+  if (supportsVolatile) {
+    const marked = base.volatile()
+    const twin = plugin.registrationSafeSchema(marked)
+
+    assert.notEqual(twin, marked, 'a marked schema must be copied, never mutated in place')
+    assert.equal(marked.meta?.volatile, true, 'the source marker must survive (the loader still needs it)')
+    assert.equal(twin.meta?.volatile, undefined, 'the twin must carry no marker')
+    assert.deepEqual(twin({}), { a: true }, 'the twin must still resolve plain defaults')
+    // The copy must stay a real schema: nested subschemas are shared, not lost.
+    assert.equal(twin.type, 'object')
+    assert.deepEqual(Object.keys(twin.dict ?? {}), ['a'])
+  } else {
+    assert.equal(plugin.registrationSafeSchema(base), base, 'an unmarkable runtime must get the node back')
+  }
+
+  // Marker-free nodes always pass through untouched — the 0.1.7 path depends on
+  // that, and so does every runtime without `.volatile()`.
+  assert.equal(plugin.registrationSafeSchema(base), base)
+  const bare = { notASchema: true }
+  assert.equal(plugin.registrationSafeSchema(bare), bare)
+  assert.equal(plugin.registrationSafeSchema(null), null)
 })
 
 await check('isVolatileRef detects refs structurally, not by class', () => {
@@ -739,6 +778,40 @@ await check('installSettingsSection still prefers installSection when present', 
     onChange: () => {},
   })
   assert.ok(installed, 'installSection must be called when the service offers it')
+  // The service resolves and STORES this schema, so it must not be volatile.
+  assert.equal(installed[2].meta?.volatile, undefined, 'installSection must receive the unmarked twin')
+  // The loader-facing Config must keep whatever marker the runtime gave it: on
+  // 3.18.3+ that is `true` (0.1.7 needs it), on 3.18.2 there is no marker to
+  // keep. Either way it must never be `false`.
+  assert.notEqual(plugin.Config.meta?.volatile, false, 'the loader-facing Config must keep its marker')
+})
+
+await check('the register branch hands the service an unmarked schema too', () => {
+  // The rc line's `register` has the identical store-the-resolved-value
+  // contract, so it needs the same twin.
+  let registered = null
+  const ctx = {
+    fiber: { state: 2 },
+    inject: (_deps, fn) => fn({
+      settings: {
+        register: (ns, schema) => {
+          registered = { ns, schema }
+          return { get: () => ({}), watch: () => {} }
+        },
+      },
+      effect: () => {},
+      on: () => {},
+    }),
+  }
+  plugin.installSettingsSection(ctx, 'hydrasearch', plugin.Config, { base: true }, {
+    setSource: () => {},
+    onChange: () => {},
+  })
+  assert.ok(registered !== null, 'register must be called when the service offers it')
+  assert.equal(registered.ns, 'hydrasearch')
+  assert.equal(registered.schema.meta?.volatile, undefined, 'register must receive the unmarked twin')
+  // And the twin must resolve real defaults, which is the whole point.
+  assert.deepEqual(registered.schema({}).priority, ['tinyfish', 'anysearch'])
 })
 
 await check('apply() unwraps a volatile config ref, and keeps it LIVE after mounting', () => {

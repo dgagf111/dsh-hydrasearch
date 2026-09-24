@@ -13,13 +13,42 @@ concurrency:
 
 jobs:
   test:
-    name: verify (node ${{ matrix.node }}, schemastery ${{ matrix.schemastery }})
+    name: verify (${{ matrix.generation.label }}, node ${{ matrix.node }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         node: ['20', '22']
-        schemastery: ['3.18.2', '3.18.4']
+        # Every DSH generation this plugin claims to support, each pinned
+        # exactly. Two of them share a generation but differ in schemastery,
+        # because that is the axis the plugin's compatibility shim actually
+        # rides — and the axis that silently changed under an unchanged commit
+        # when `^3.18.2` started resolving to 3.18.4.
+        generation:
+          - id: rc6-3182
+            label: 'rc.6 + schemastery 3.18.2'
+            dsh: '0.1.0-rc.6'
+            cordis: '4.0.1'
+            schemastery: '3.18.2'
+            settingsFile: true
+          - id: rc6-3184
+            label: 'rc.6 + schemastery 3.18.4'
+            dsh: '0.1.0-rc.6'
+            cordis: '4.0.1'
+            schemastery: '3.18.4'
+            settingsFile: true
+          - id: alpha016
+            label: '0.1.6-alpha.2 + schemastery 3.18.2'
+            dsh: '0.1.6-alpha.2'
+            cordis: '4.0.2'
+            schemastery: '3.18.2'
+            settingsFile: true
+          - id: rc1
+            label: '0.1.7-rc.1 + schemastery 3.18.4'
+            dsh: '0.1.7-rc.1'
+            cordis: '4.0.4'
+            schemastery: '3.18.4'
+            settingsFile: false
 
     steps:
       - uses: actions/checkout@v4
@@ -29,34 +58,57 @@ jobs:
           node-version: ${{ matrix.node }}
 
       - name: Install DSH service modules
-        # Install the legacy DSH service generation exactly, then exercise both
-        # sides of the schemastery compatibility boundary. A floating range used
-        # to make this job change underneath an unchanged commit when a new patch
-        # was published (the 3.18.2 -> 3.18.4 transition exposed exactly that).
+        # EXACT pins only. A floating range let a dependency release change what
+        # CI tested without any code change: `schemastery@^3.18.2` resolved to
+        # 3.18.2 when the commit was authored and to 3.18.4 two days later, which
+        # turned a README-only push red. The matrix above is the replacement.
+        #
+        # Why these pairings:
+        #   - 3.18.2 is what the 0.1.6-alpha.2 desktop build ships and has NO
+        #     `.volatile()`; 3.18.4 is marker-capable.
+        #   - rc.6 is tested against BOTH, because a marker-capable schemastery
+        #     plus a registration-generation settings service is the combination
+        #     that stored a cordis ref as the resolved config.
+        #   - `dsh-settings-file` does not exist for 0.1.7-rc.1, so that
+        #     generation installs without it and skips the suites that need it.
         #
         # `--legacy-peer-deps` remains required: the DSH peer graph is
         # self-referential across generations, so npm's strict resolver reports
         # ERESOLVE even though every package involved is published/installable.
         run: |
-          npm install --no-audit --no-fund --legacy-peer-deps \
-            @deepseek-ai/cordis@4.0.1 \
-            @deepseek-ai/dsh-app-boot@0.1.0-rc.6 \
-            @deepseek-ai/dsh-atomic-write@0.1.0-rc.6 \
-            @deepseek-ai/dsh-credentials@0.1.0-rc.6 \
-            @deepseek-ai/dsh-credentials-local@0.1.0-rc.6 \
-            @deepseek-ai/dsh-home-paths@0.1.0-rc.6 \
-            @deepseek-ai/dsh-launch-environment@0.1.0-rc.6 \
-            @deepseek-ai/dsh-llm@0.1.0-rc.6 \
-            @deepseek-ai/dsh-scope@0.1.0-rc.6 \
-            @deepseek-ai/dsh-settings@0.1.0-rc.6 \
-            @deepseek-ai/dsh-settings-file@0.1.0-rc.6 \
-            @deepseek-ai/dsh-system-prompt@0.1.0-rc.6 \
-            @deepseek-ai/dsh-timeout@0.1.0-rc.6 \
-            @deepseek-ai/dsh-tools@0.1.0-rc.6 \
-            @deepseek-ai/dsh-web@0.1.0-rc.6 \
-            @deepseek-ai/schemastery@${{ matrix.schemastery }} \
-            react@18.3.1 \
-            react-dom@18.3.1
+          PKGS=(
+            "@deepseek-ai/cordis@${{ matrix.generation.cordis }}"
+            "@deepseek-ai/dsh-app-boot@${{ matrix.generation.dsh }}"
+            "@deepseek-ai/dsh-atomic-write@${{ matrix.generation.dsh }}"
+            "@deepseek-ai/dsh-credentials@${{ matrix.generation.dsh }}"
+            "@deepseek-ai/dsh-credentials-local@${{ matrix.generation.dsh }}"
+            "@deepseek-ai/dsh-home-paths@${{ matrix.generation.dsh }}"
+            "@deepseek-ai/dsh-launch-environment@${{ matrix.generation.dsh }}"
+            "@deepseek-ai/dsh-llm@${{ matrix.generation.dsh }}"
+            "@deepseek-ai/dsh-scope@${{ matrix.generation.dsh }}"
+            "@deepseek-ai/dsh-settings@${{ matrix.generation.dsh }}"
+            "@deepseek-ai/dsh-system-prompt@${{ matrix.generation.dsh }}"
+            "@deepseek-ai/dsh-timeout@${{ matrix.generation.dsh }}"
+            "@deepseek-ai/dsh-tools@${{ matrix.generation.dsh }}"
+            "@deepseek-ai/dsh-web@${{ matrix.generation.dsh }}"
+            "@deepseek-ai/schemastery@${{ matrix.generation.schemastery }}"
+            "react@18.3.1"
+            "react-dom@18.3.1"
+          )
+          if [ "${{ matrix.generation.settingsFile }}" = "true" ]; then
+            PKGS+=("@deepseek-ai/dsh-settings-file@${{ matrix.generation.dsh }}")
+          fi
+          npm install --no-audit --no-fund --legacy-peer-deps "${PKGS[@]}"
+
+          # Record what actually landed: a silent resolution change is the
+          # failure mode this job exists to make visible.
+          node -e '
+            const read = (name) => require(`${name}/package.json`).version
+            console.log("schemastery", read("@deepseek-ai/schemastery"))
+            console.log("dsh-settings", read("@deepseek-ai/dsh-settings"))
+            console.log("dsh-web", read("@deepseek-ai/dsh-web"))
+            console.log("cordis", read("@deepseek-ai/cordis"))
+          '
 
       - name: Server-side unit checks
         # The live-network section self-skips when no API key is present, so this
@@ -70,16 +122,30 @@ jobs:
       - name: Browser-half checks
         run: node scripts/verify-client.mjs
 
+      - name: CI workflow checks
+        # The workflow is the only place the supported-generation matrix is
+        # declared, and a mistake there is invisible until GitHub runs it. This
+        # validates the file itself: exact pins only, the four-generation matrix,
+        # and the conditional steps for the generation with no dsh-settings-file.
+        run: node scripts/verify-workflow.mjs
+
       - name: In-process integration checks
         # Mounts the real WebRuntime / settings / credentials services on a real
         # Cordis context and calls the plugin's apply(). This is the suite that
         # proves the plugin works against the actual seam rather than a stub.
+        #
+        # Skipped for 0.1.7-rc.1: that generation has no `dsh-settings-file`
+        # package at all (the file provider was folded into `SettingsForms`), so
+        # the suite's mount cannot be composed. Its registration-less branch is
+        # covered by the `release-compatibility contract` checks in verify.mjs.
+        if: matrix.generation.settingsFile
         run: node scripts/verify-integration.mjs
 
       - name: End-to-end regression proof
         # Reproduces the two reported failures on a scratch home — including the
         # exported `TINYFISH_API_KEY` that made a saved key unreachable and
         # unclearable — and asserts both are fixed.
+        if: matrix.generation.settingsFile
         run: node scripts/verify-e2e.mjs
 
       - name: Shipped modules parse, and the manifest is self-consistent
