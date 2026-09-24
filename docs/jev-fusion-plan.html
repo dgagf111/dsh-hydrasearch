@@ -1,0 +1,844 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jev × hydrasearch 融合方案 · 数据流对比</title>
+<style>
+/* ─────────────────────────────────────────────────────────────────────────
+   设计 token 取自 DSH 的 ui-theme（dsh-client-ui-theme/lib/client.js 的
+   base.css + body / body[data-ds-dark-theme] 两块）。这里用 --jv-* 命名空间
+   镜像它们，既不覆盖 DSH 自己的变量，单独用浏览器打开也照样成图。
+   ───────────────────────────────────────────────────────────────────────── */
+:root{
+  --jv-bg:#fff;
+  --jv-layer1:#fff;
+  --jv-layer2:#fff;
+  --jv-layer3:#fff;
+  --jv-raise:#f9fafb;          /* bluish-50  */
+  --jv-raise-2:#f1f3f5;        /* bluish-75  */
+  --jv-input:#fff;             /* specific-input-major */
+  --jv-code-bg:#f9fafb;        /* markdown-code-block  */
+  --jv-b1:#0000000a;
+  --jv-b2:#0000001a;
+  --jv-b3:#0000001f;
+  --jv-b4:#00000029;
+  --jv-text:#0f1115;           /* bluish-1000 */
+  --jv-text-2:#61666b;         /* bluish-700  */
+  --jv-text-3:#81858c;         /* bluish-600  */
+  --jv-hover:#2631480f;
+  --jv-hover-accent:#26314824;
+  /* 语义色（浅色档） */
+  --jv-blue:#4176e6;           /* deepseek-500 = state-business-primary */
+  --jv-blue-soft:#edf3fe;      /* deepseek-50  */
+  --jv-blue-line:#b7c8fe;      /* deepseek-200 */
+  --jv-amber:#f59e0b;          /* amber-500 = state-warn-primary */
+  --jv-amber-deep:#dd8629;     /* amber-600 = state-warn-label  */
+  --jv-amber-soft:#fef5e7;     /* amber-100 */
+  --jv-amber-line:#f7ad31;     /* amber-400 */
+  --jv-green:#22c55e;          /* green-500 = state-success-primary */
+  --jv-green-soft:#e6faed;     /* green-100 */
+  --jv-red:#ec1313;            /* red-600 = state-error-primary */
+  --jv-red-soft:#fef2f2;       /* red-50 */
+  --jv-red-line:#f25a5a;       /* red-400 */
+  --jv-font:-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+            "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --jv-mono:"SF Mono", "JetBrains Mono", "Fira Code", Consolas,
+            "Liberation Mono", Menlo, Courier, "PingFang SC", "Microsoft YaHei";
+  --jv-ease:cubic-bezier(.4,0,.2,1);
+  --jv-r:8px;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --jv-bg:#151517;           /* bluish-950 */
+    --jv-layer1:#232324;       /* bluish-875 */
+    --jv-layer2:#2c2c2e;       /* bluish-850 */
+    --jv-layer3:#353638;       /* bluish-800 */
+    --jv-raise:#353638;
+    --jv-raise-2:#2c2c2e;
+    --jv-input:#353638;
+    --jv-code-bg:#1b1b1c;      /* bluish-900 */
+    --jv-b1:#ffffff0f;
+    --jv-b2:#ffffff1f;
+    --jv-b3:#ffffff29;
+    --jv-b4:#ffffff33;
+    --jv-text:#f9fafb;         /* bluish-50  */
+    --jv-text-2:#cfd3d6;       /* bluish-300 */
+    --jv-text-3:#adb2b8;       /* bluish-400 */
+    --jv-hover:#ffffff14;
+    --jv-hover-accent:#ffffff3d;
+    --jv-blue:#7aaaff;         /* deepseek-400 */
+    --jv-blue-soft:#34415b;    /* deepseek-800 */
+    --jv-blue-line:#4868b2;    /* deepseek-600 */
+    --jv-amber-soft:#27241f;   /* amber-900 */
+    --jv-green-soft:#233c2c;   /* green-900  */
+    --jv-red:#f25a5a;          /* red-400 */
+    --jv-red-soft:#570c0c;     /* red-900 */
+  }
+}
+/* DSH 自己的主题开关也尊重一下 */
+body[data-ds-dark-theme]{
+  --jv-bg:#151517; --jv-layer1:#232324; --jv-layer2:#2c2c2e; --jv-layer3:#353638;
+  --jv-raise:#353638; --jv-raise-2:#2c2c2e; --jv-input:#353638; --jv-code-bg:#1b1b1c;
+  --jv-b1:#ffffff0f; --jv-b2:#ffffff1f; --jv-b3:#ffffff29; --jv-b4:#ffffff33;
+  --jv-text:#f9fafb; --jv-text-2:#cfd3d6; --jv-text-3:#adb2b8;
+  --jv-hover:#ffffff14; --jv-hover-accent:#ffffff3d;
+  --jv-blue:#7aaaff; --jv-blue-soft:#34415b; --jv-blue-line:#4868b2;
+  --jv-amber-soft:#27241f; --jv-green-soft:#233c2c;
+  --jv-red:#f25a5a; --jv-red-soft:#570c0c;
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--jv-bg); color:var(--jv-text);
+  font:15px/1.6 var(--jv-font);
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1440px;margin:0 auto;padding:40px 28px 80px}
+
+/* ── hero ─────────────────────────────────────────────────────────────── */
+.hero{border-bottom:.5px solid var(--jv-b2);padding-bottom:26px;margin-bottom:34px}
+.eyebrow{
+  font:600 11px/1 var(--jv-font);letter-spacing:.1em;text-transform:uppercase;
+  color:var(--jv-text-3);margin:0 0 12px
+}
+h1{font-size:30px;line-height:1.3;font-weight:600;margin:0 0 12px;letter-spacing:-.01em}
+h1 .thin{color:var(--jv-text-3);font-weight:400}
+.lede{margin:0;max-width:80ch;color:var(--jv-text-2);font-size:15px}
+.lede b{color:var(--jv-text);font-weight:600}
+.verdict{
+  margin:22px 0 0;display:grid;gap:1px;background:var(--jv-b2);
+  border:1px solid var(--jv-b2);border-radius:var(--jv-r);overflow:hidden;
+  grid-template-columns:repeat(3,1fr)
+}
+.verdict > div{background:var(--jv-layer3);padding:14px 16px}
+.verdict dt{font:600 11px/1.4 var(--jv-font);letter-spacing:.06em;text-transform:uppercase;color:var(--jv-text-3);margin:0 0 6px}
+.verdict dd{margin:0;font-size:14px;line-height:1.5}
+.verdict dd b{font-weight:600}
+
+/* ── section headings ─────────────────────────────────────────────────── */
+.sec{margin:56px 0 0}
+.sec-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:0 0 6px}
+h2{font-size:19px;font-weight:600;margin:0;letter-spacing:-.005em}
+h2 .num{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:22px;height:22px;border-radius:50%;margin-right:9px;
+  background:var(--jv-hover-accent);color:var(--jv-blue);
+  font:600 12px/1 var(--jv-font);vertical-align:1px
+}
+.sec-sub{margin:0 0 22px;color:var(--jv-text-2);font-size:14px;max-width:88ch}
+
+/* ── legend ───────────────────────────────────────────────────────────── */
+.legend{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 20px}
+.tag{
+  display:inline-flex;align-items:center;gap:5px;
+  border:1px solid var(--jv-b2);border-radius:999px;
+  padding:2px 9px;font:500 11px/18px var(--jv-font);color:var(--jv-text-2);
+  background:var(--jv-layer2)
+}
+.tag i{width:7px;height:7px;border-radius:2px;flex:none}
+
+/* ── 三列流程 ─────────────────────────────────────────────────────────── */
+.cols{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;align-items:start}
+.col{min-width:0;display:flex;flex-direction:column}
+.col-head{
+  border:1px solid var(--jv-b2);border-radius:var(--jv-r) var(--jv-r) 0 0;
+  border-bottom:0;padding:13px 15px;background:var(--jv-layer2)
+}
+.col-head .kicker{font:600 10px/1 var(--jv-font);letter-spacing:.09em;text-transform:uppercase;color:var(--jv-text-3);margin:0 0 6px}
+.col-head h3{margin:0;font-size:15px;font-weight:600}
+.col-head p{margin:5px 0 0;font-size:12.5px;line-height:1.5;color:var(--jv-text-2)}
+.col-body{
+  border:1px solid var(--jv-b2);border-top:1px dashed var(--jv-b3);
+  border-radius:0 0 var(--jv-r) var(--jv-r);
+  padding:18px 15px 16px;background:var(--jv-layer3);flex:1
+}
+.col.a .col-head{border-top:2px solid var(--jv-blue)}
+.col.b .col-head{border-top:2px solid var(--jv-text-3)}
+.col.c .col-head{border-top:2px solid var(--jv-green)}
+
+/* 流程图：竖直步进 */
+.flow{display:flex;flex-direction:column;gap:0;counter-reset:step}
+.step{
+  position:relative;border:1px solid var(--jv-b2);border-radius:6px;
+  background:var(--jv-layer2);padding:9px 11px 10px;min-width:0
+}
+.step + .step{margin-top:30px}
+.step + .step::before{
+  content:"";position:absolute;left:15px;top:-30px;width:1px;height:30px;background:var(--jv-b3)
+}
+.step + .step::after{
+  content:"";position:absolute;left:11px;top:-9px;
+  border:4px solid transparent;border-top:5px solid var(--jv-b4);border-bottom:0
+}
+.step .who{
+  display:inline-flex;align-items:center;gap:4px;
+  font:600 10px/1 var(--jv-font);letter-spacing:.05em;text-transform:uppercase;
+  margin:0 0 5px
+}
+.step .who i{width:6px;height:6px;border-radius:2px;flex:none}
+.step .t{font-size:13px;font-weight:600;line-height:1.4;margin:0}
+.step .d{margin:4px 0 0;font-size:12px;line-height:1.5;color:var(--jv-text-2)}
+.step code{
+  font-family:var(--jv-mono);font-size:11.5px;
+  background:var(--jv-code-bg);border:1px solid var(--jv-b1);
+  border-radius:4px;padding:.5px 4px;color:var(--jv-text)
+}
+.step ul{margin:5px 0 0;padding-left:15px;font-size:12px;line-height:1.55;color:var(--jv-text-2)}
+.step ul li{margin:1px 0}
+
+/* 分类配色 */
+.step.judge .who{color:var(--jv-amber-deep)}
+.step.judge{border-color:var(--jv-amber-line);background:var(--jv-amber-soft)}
+.step.judge .who i{background:var(--jv-amber)}
+.step.code .who{color:var(--jv-text-2)}
+.step.code .who i{background:var(--jv-text-3)}
+.step.net .who{color:var(--jv-blue)}
+.step.net{border-color:var(--jv-blue-line);background:var(--jv-blue-soft)}
+.step.net .who i{background:var(--jv-blue)}
+.step.seam{border-style:dashed;border-color:var(--jv-amber-line)}
+.step.seam .who{color:var(--jv-amber-deep)}
+.step.seam .who i{background:var(--jv-amber)}
+.step.loss{border-color:var(--jv-red-line);background:var(--jv-red-soft)}
+.step.loss .who{color:var(--jv-red)}
+.step.loss .who i{background:var(--jv-red)}
+
+/* 新增标记 */
+.step.new > .badge{
+  position:absolute;top:-9px;right:9px;
+  border:1px solid var(--jv-green);border-radius:999px;background:var(--jv-bg);
+  color:var(--jv-green);font:600 9.5px/1 var(--jv-font);
+  letter-spacing:.06em;padding:3px 6px;text-transform:uppercase
+}
+.step.new{border-left:3px solid var(--jv-green)}
+
+/* 终点 */
+.out{
+  margin-top:30px;position:relative;
+  border:1px solid var(--jv-b3);border-radius:6px;
+  background:var(--jv-raise);padding:11px 12px
+}
+.out::before{content:"";position:absolute;left:15px;top:-30px;width:1px;height:30px;background:var(--jv-b3)}
+.out::after{
+  content:"";position:absolute;left:11px;top:-9px;
+  border:4px solid transparent;border-top:5px solid var(--jv-b4);border-bottom:0
+}
+.out .kicker{font:600 10px/1 var(--jv-font);letter-spacing:.08em;text-transform:uppercase;color:var(--jv-text-3);margin:0 0 6px}
+.out pre{
+  margin:0;font-family:var(--jv-mono);font-size:11.5px;line-height:1.65;
+  color:var(--jv-text-2);white-space:pre-wrap;word-break:break-word
+}
+.out pre b{color:var(--jv-text);font-weight:600}
+.col.c .out{border-color:var(--jv-green);border-left:3px solid var(--jv-green)}
+
+/* ── 表格 ─────────────────────────────────────────────────────────────── */
+.tbl{border:1px solid var(--jv-b2);border-radius:var(--jv-r);overflow:hidden;background:var(--jv-layer3)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--jv-b1);vertical-align:top}
+th{
+  font:600 11px/1.4 var(--jv-font);letter-spacing:.05em;text-transform:uppercase;
+  color:var(--jv-text-3);background:var(--jv-layer2);white-space:nowrap
+}
+tbody tr:last-child td{border-bottom:0}
+td code,.mono{font-family:var(--jv-mono);font-size:11.5px}
+.verdict-cell{white-space:nowrap;font-weight:600;font-size:12px}
+.ok{color:var(--jv-green)} .part{color:var(--jv-amber-deep)} .no{color:var(--jv-red)}
+
+/* 契约盒：入口/出口 */
+.contract{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:0 0 22px}
+.slot{
+  border:1px dashed var(--jv-amber-line);border-radius:var(--jv-r);
+  background:var(--jv-amber-soft);padding:15px 16px;min-width:0
+}
+.slot .kicker{
+  font:600 10px/1 var(--jv-font);letter-spacing:.09em;text-transform:uppercase;
+  color:var(--jv-amber-deep);margin:0 0 10px
+}
+.slot pre{
+  margin:0;background:var(--jv-bg);border:1px solid var(--jv-b1);border-radius:6px;
+  padding:11px 12px;font-family:var(--jv-mono);font-size:11.5px;line-height:1.7;
+  overflow-x:auto;color:var(--jv-text)
+}
+.slot .note{margin:10px 0 0;font-size:12px;line-height:1.55;color:var(--jv-text-2)}
+
+/* ── 计划细节 ─────────────────────────────────────────────────────────── */
+.plan-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:20px;align-items:start}
+.panel{border:1px solid var(--jv-b2);border-radius:var(--jv-r);background:var(--jv-layer3);overflow:hidden}
+.panel > h4{
+  margin:0;padding:12px 15px;border-bottom:1px solid var(--jv-b1);
+  background:var(--jv-layer2);font:600 13px/1.4 var(--jv-font)
+}
+.panel > h4 .kicker{display:block;font:600 10px/1 var(--jv-font);letter-spacing:.08em;text-transform:uppercase;color:var(--jv-text-3);margin:0 0 5px}
+.panel-body{padding:15px}
+.diffbox{
+  margin:0;font-family:var(--jv-mono);font-size:11.5px;line-height:1.75;
+  white-space:pre-wrap;word-break:break-word;color:var(--jv-text-2)
+}
+.diffbox .add{color:var(--jv-green);font-weight:600}
+.diffbox .del{color:var(--jv-red)}
+.diffbox .dim{color:var(--jv-text-3)}
+.diffbox .k{color:var(--jv-blue)}
+
+.chain{display:flex;flex-direction:column;gap:9px}
+.chip{
+  display:flex;align-items:flex-start;gap:10px;
+  border:1px solid var(--jv-b2);border-radius:6px;background:var(--jv-layer2);
+  padding:9px 11px;min-width:0
+}
+.chip .n{
+  flex:none;width:19px;height:19px;border-radius:50%;
+  display:inline-flex;align-items:center;justify-content:center;
+  background:var(--jv-hover-accent);color:var(--jv-blue);
+  font:600 10.5px/1 var(--jv-font);margin-top:1px
+}
+.chip .body{min-width:0}
+.chip .body b{display:block;font-size:12.5px;font-weight:600;line-height:1.4}
+.chip .body span{display:block;font-size:11.5px;line-height:1.5;color:var(--jv-text-2);margin-top:2px}
+.chip.on{border-color:var(--jv-green);border-left:3px solid var(--jv-green)}
+.chip.off{border-style:dashed}
+.chip .flag{flex:none;margin-left:auto;font:600 10px/1 var(--jv-font);letter-spacing:.05em;text-transform:uppercase;padding-top:2px}
+.chip.on .flag{color:var(--jv-green)}
+.chip.off .flag{color:var(--jv-text-3)}
+
+/* 代码块 */
+.snippet{
+  margin:0;background:var(--jv-code-bg);border:1px solid var(--jv-b1);border-radius:6px;
+  padding:13px 14px;font-family:var(--jv-mono);font-size:11.5px;line-height:1.75;
+  white-space:pre-wrap;word-break:break-word;color:var(--jv-text-2)
+}
+.snippet .c{color:var(--jv-text-3)}
+.snippet .k{color:var(--jv-blue)}
+.snippet .s{color:var(--jv-green)}
+.snippet .j{color:var(--jv-amber-deep);font-weight:600}
+
+.foot{margin:44px 0 0;padding-top:18px;border-top:.5px solid var(--jv-b2);font-size:12px;color:var(--jv-text-3)}
+.foot code{font-family:var(--jv-mono);font-size:11.5px}
+.foot p{margin:0 0 6px}
+
+/* ── 响应式 ───────────────────────────────────────────────────────────── */
+@media (max-width:1180px){
+  .verdict{grid-template-columns:1fr}
+  .plan-grid{grid-template-columns:1fr}
+}
+@media (max-width:900px){
+  .wrap{padding:26px 16px 60px}
+  h1{font-size:23px}
+  .cols{grid-template-columns:1fr;gap:26px}
+  .contract{grid-template-columns:1fr}
+  .col-head{border-radius:var(--jv-r) var(--jv-r) 0 0}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ═══════════════════ hero ═══════════════════ -->
+  <header class="hero">
+    <p class="eyebrow">dsh-hydrasearch · 方案对比</p>
+    <h1>把 Jev 的判断层融进 <span class="thin">hydrasearch 的检索链</span></h1>
+    <p class="lede">
+      <b>jev-search</b> 的做法是「判断与检索彻底分离」：Jev 只回答结构化问题，从不生成查询词、从不生成答案，
+      两次判断夹一段并发检索，剩下全是确定性代码。<b>能搬到本仓库，但只能搬进「检索之内」</b>——
+      <code style="font-family:var(--jv-mono);font-size:13px">ctx.web</code> 只给了一个 <code style="font-family:var(--jv-mono);font-size:13px">query</code> 入参和一个
+      <code style="font-family:var(--jv-mono);font-size:13px">sources[]</code> 出参，所以流式、分数、交互三件产品级特性无处安放。
+    </p>
+    <dl class="verdict">
+      <div>
+        <dt>搬得动</dt>
+        <dd>候选词生成 · 源/窗口判断 · <b>判切题并排序</b> · URL 折叠 · 每 lane 独立失败</dd>
+      </div>
+      <div>
+        <dt>搬不动</dt>
+        <dd>NDJSON 流式事件 · <b>relevance 分数可见</b> · Best/Newest 与可编辑 chip</dd>
+      </div>
+      <div>
+        <dt>先决条件</dt>
+        <dd>TypeSafe 官方称 <b>CJK 准确度不如英文</b> —— 先做一批真实中文查询的开/关对照</dd>
+      </div>
+    </dl>
+  </header>
+
+  <!-- ═══════════════════ 1. 三条链路 ═══════════════════ -->
+  <section class="sec">
+    <div class="sec-head"><h2><span class="num">1</span>三条链路的数据流向</h2></div>
+    <p class="sec-sub">
+      从左到右：原版 jev-search、本仓库今天、融合后的目标。颜色表示「谁在做这件事」，
+      箭头是数据流向；绿色左边框 = 本次新增。
+    </p>
+
+    <div class="legend">
+      <span class="tag"><i style="background:var(--jv-amber)"></i>Jev 判断</span>
+      <span class="tag"><i style="background:var(--jv-blue)"></i>检索后端</span>
+      <span class="tag"><i style="background:var(--jv-text-3)"></i>确定性代码</span>
+      <span class="tag"><i style="background:var(--jv-amber);border:1px dashed var(--jv-amber-line)"></i>seam 契约</span>
+      <span class="tag"><i style="background:var(--jv-red)"></i>信息丢失</span>
+      <span class="tag"><i style="background:var(--jv-green)"></i>本次新增</span>
+    </div>
+
+    <div class="cols">
+
+      <!-- ───── A. jev-search ───── -->
+      <div class="col a">
+        <div class="col-head">
+          <p class="kicker">A · 原链路</p>
+          <h3>jev-search</h3>
+          <p>11 个源 / 16 条 lane，NDJSON 流式，面向浏览器的独立 Web 应用</p>
+        </div>
+        <div class="col-body">
+          <div class="flow">
+
+            <div class="step code">
+              <p class="who"><i></i>代码 · candidates.ts</p>
+              <p class="t">buildCandidates(request)</p>
+              <p class="d">正则产出 1–4 个候选词，c0 永远是原话。中英文都覆盖。</p>
+            </div>
+
+            <div class="step judge">
+              <p class="who"><i></i>Jev · inferIntent()</p>
+              <p class="t">一次请求问四类问题</p>
+              <ul>
+                <li><code>window</code> → choice：any / 24h / 7d / 30d</li>
+                <li><code>source_*</code> → 12 条 noul，各带 yes/no rubric</li>
+                <li><code>query</code> → choice：从候选里挑一个</li>
+                <li><code>entity</code> → choice：目录型引擎要的专名</li>
+              </ul>
+              <p class="d">state 里显式带上 <code>now</code> —— Jev 不知道今天几号。</p>
+            </div>
+
+            <div class="step net">
+              <p class="who"><i></i>Search1API · 投机</p>
+              <p class="t">Google + 原话，与判断并发发出</p>
+              <p class="d">若 Jev 最终选的正是 c0 且不要时间窗，直接复用这次结果；否则丢掉。纯延迟优化。</p>
+            </div>
+
+            <div class="step code">
+              <p class="who"><i></i>代码 · 阈值 + planLanes</p>
+              <p class="t">source 概率 ≥ 0.6 才起 lane</p>
+              <p class="d">Reddit / HN / GitHub 各跑两条 lane：Google 加 <code>include_sites</code> + 专用引擎。同一源内一个引擎挂掉不拖垮其它。</p>
+            </div>
+
+            <div class="step net">
+              <p class="who"><i></i>Search1API · 逐 lane</p>
+              <p class="t">每个源的每个引擎一个请求</p>
+              <p class="d">并发；15s/lane、30s/请求。结果先发 <code>found</code> 事件让页面亮出条数。</p>
+            </div>
+
+            <div class="step judge">
+              <p class="who"><i></i>Jev · rerank()</p>
+              <p class="t">每批 40 条 noul</p>
+              <p class="d">「<code>results[i]</code> 是不是在讲用户问的那件事」——判词刻意针对「只共享字面」的失败模式。</p>
+            </div>
+
+            <div class="step code">
+              <p class="who"><i></i>代码 · rank.ts / merge.ts</p>
+              <p class="t">折叠 + 排序</p>
+              <p class="d">按 <code>canonicalUrl</code>（去 tracking、twitter→x.com）或规范化标题聚类；同 URL 多 lane 折成一行：engines 并集、relevance 取 max。</p>
+            </div>
+
+            <div class="step net">
+              <p class="who"><i></i>NDJSON 流</p>
+              <p class="t">intent → found → lane → done</p>
+              <p class="d"><code>Promise.race</code> 谁先完成发谁，所以 chip 能先亮、结果逐 lane 填。</p>
+            </div>
+
+          </div>
+
+          <div class="out">
+            <p class="kicker">浏览器 UI 拿到</p>
+            <pre><b>relevance 百分比</b> · source chip
+窗口 chip · <b>Best / Newest 切换</b>
+可编辑的源与时间过滤</pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- ───── B. 今天 ───── -->
+      <div class="col b">
+        <div class="col-head">
+          <p class="kicker">B · 现状</p>
+          <h3>dsh-hydrasearch</h3>
+          <p>注册单一 provider，两后端故障切换；模型自己判断哪条结果有用</p>
+        </div>
+        <div class="col-body">
+          <div class="flow">
+
+            <div class="step seam">
+              <p class="who"><i></i>seam 入口</p>
+              <p class="t">query · maxResults</p>
+              <p class="d"><code>WebSearchRequest</code> 只有这两个字段。没有时间、没有源、没有站点参数。</p>
+            </div>
+
+            <div class="step code">
+              <p class="who"><i></i>Provider · search()</p>
+              <p class="t">ensureHydrated → chain()</p>
+              <p class="d">先结算凭据快照（<code>available()</code> 是同步的），再按 <code>priority</code> 建链。</p>
+            </div>
+
+            <div class="step code">
+              <p class="who"><i></i>代码 · 故障切换</p>
+              <p class="t">for backend of chain</p>
+              <ul>
+                <li>不可用 → <code>skipped-unavailable</code>（没试）</li>
+                <li>失败 → <code>failed</code>（试了）+ 原因 → 换下一个</li>
+                <li>取消 → 立即抛出，<b>不换</b></li>
+              </ul>
+            </div>
+
+            <div class="step net">
+              <p class="who"><i></i>TinyFish / AnySearch</p>
+              <p class="t">同一个 query 原样下发</p>
+              <p class="d">TinyFish 走分页 GET + 日期归一化；AnySearch 走 <code>/v1/search</code> + 信封判定。都是「拿什么查什么」。</p>
+            </div>
+
+            <div class="step code">
+              <p class="who"><i></i>代码 · 去重</p>
+              <p class="t">按 URL 折叠，保持首次出现顺序</p>
+            </div>
+
+            <div class="step seam">
+              <p class="who"><i></i>seam 出口</p>
+              <p class="t">url · title · snippet · publishedAt</p>
+              <p class="d">外加一段可选 <code>content</code>。seam 的 <code>capSources()</code> 负责截断并置 <code>truncated</code>。</p>
+            </div>
+
+          </div>
+
+          <div class="out">
+            <p class="kicker">模型拿到</p>
+            <pre>- [title](url) — snippet (date)
+- [title](url) — snippet (date)
+…
+
+<b>顺序 = 引擎原始排名</b>
+模型自己判断哪条有用</pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- ───── C. 计划 ───── -->
+      <div class="col c">
+        <div class="col-head">
+          <p class="kicker">C · 计划</p>
+          <h3>hydrasearch + Jev</h3>
+          <p>仍然只注册一个 provider；Jev 是它的内部前置阶段，不是第三个 backend</p>
+        </div>
+        <div class="col-body">
+          <div class="flow">
+
+            <div class="step seam">
+              <p class="who"><i></i>seam 入口（未变）</p>
+              <p class="t">query · maxResults</p>
+            </div>
+
+            <div class="step code new">
+              <span class="badge">新增</span>
+              <p class="who"><i></i>代码 · lib/candidates.js</p>
+              <p class="t">buildCandidates(query)</p>
+              <p class="d">从 <code>candidates.ts</code> 直译。纯函数、可单测、零依赖 —— 最省事也最值得先搬的一块。</p>
+            </div>
+
+            <div class="step judge new">
+              <span class="badge">新增</span>
+              <p class="who"><i></i>Jev · inferIntent()</p>
+              <p class="t">与「投机检索」并发</p>
+              <p class="d">state = <code>{request, now, candidates}</code>。判出窗口、要哪些源、用哪个候选词。</p>
+              <p class="d"><b>无 key / 失败 → 退回原 query</b>，记 <code>skipped-unavailable</code>，整条搜索照常成功。</p>
+            </div>
+
+            <div class="step code new">
+              <span class="badge">新增</span>
+              <p class="who"><i></i>代码 · planLanes()</p>
+              <p class="t">把 intent 翻译成后端参数</p>
+              <ul>
+                <li><b>AnySearch 承担源</b>：<code>tag</code> + <code>params</code>（Reddit/GitHub/arXiv/X/微博/知乎/微信 有真 vertical）</li>
+                <li><b>TinyFish 承担时间窗</b>：<code>after_date</code> / <code>recency_minutes</code> / <code>domain_type=news</code></li>
+              </ul>
+              <p class="d">AnySearch 对 <code>time_range</code> 完全无感（实测被服务端静默忽略），所以窗口只对 TinyFish 生效 —— 这一点必须写进注解。</p>
+            </div>
+
+            <div class="step code">
+              <p class="who"><i></i>现有故障切换（复用）</p>
+              <p class="t">对每个 lane 跑一遍同一条链</p>
+              <p class="d"><code>BackendRuntime</code> 完全不改。单 lane 失败只记该 lane 的 <code>failed</code>，其它 lane 继续。</p>
+            </div>
+
+            <div class="step code new">
+              <span class="badge">新增</span>
+              <p class="who"><i></i>代码 · merge.js</p>
+              <p class="t">折叠 + 去重</p>
+              <p class="d">照搬 <code>rank.ts</code> 的 <code>canonicalUrl</code> / <code>titleKey</code>。</p>
+            </div>
+
+            <div class="step judge new">
+              <span class="badge">新增</span>
+              <p class="who"><i></i>Jev · rerank()</p>
+              <p class="t">合成一次调用，全部结果一批 ≤40 noul</p>
+              <p class="d">官方实测：13 题合成一次比 13 次单题请求<b>便宜 12.2 倍、快 10 倍，答案无差异</b>。</p>
+              <p class="d">失败 → 退回未排序结果 + <code>content</code> 说明，绝不整条失败。</p>
+            </div>
+
+            <div class="step code new">
+              <span class="badge">新增</span>
+              <p class="who"><i></i>代码 · 过滤 + 排序</p>
+              <p class="t">按 relevance 降序，阈值以下丢弃</p>
+              <p class="d"><b>但不切片</b> —— 截断仍然是 seam 的 <code>capSources()</code> 的职责，否则 <code>truncated</code> 永远是 false，模型就不知道还有更多结果。</p>
+            </div>
+
+            <div class="step seam">
+              <p class="who"><i></i>seam 出口</p>
+              <p class="t">同样的四个字段 + 判题注解</p>
+              <p class="d">注解写进 <code>content</code>：选了哪些源、什么窗口、丢了几条。</p>
+            </div>
+
+          </div>
+
+          <div class="out">
+            <p class="kicker">模型拿到</p>
+            <pre>Sources chosen: reddit, arxiv
+Time window: past week. 14/23 判为切题。
+— 注解（放 content）
+
+<b>- 按切题度排好序的 sources</b>
+- [title](url) — snippet (date)   ← 最相关的排第一
+…</pre>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ═══════════════════ 2. 收窄点 ═══════════════════ -->
+  <section class="sec">
+    <div class="sec-head"><h2><span class="num">2</span>收窄点：seam 到底允许多少</h2></div>
+    <p class="sec-sub">
+      provider 契约窄得超出直觉。这就是为什么 A 列的八个阶段到 C 列只剩五步，
+      以及为什么三件产品级特性必须在第 3 节里明说放弃。
+    </p>
+
+    <div class="contract">
+      <div class="slot">
+        <p class="kicker">入口 · WebSearchRequest</p>
+        <pre>interface WebSearchRequest {
+  readonly query: string
+  readonly maxResults?: number
+}</pre>
+        <p class="note">
+          没有时间、没有源、没有站点、没有语言。所有 scoping <b>只能由代码或 Jev 在 provider 内部决定</b>，
+          模型无法传参。想限定时间窗的唯一途径是把限定词写进 query 文本。
+        </p>
+      </div>
+      <div class="slot">
+        <p class="kicker">出口 · WebSearchSource</p>
+        <pre>interface WebSearchSource {
+  readonly url: string
+  readonly title?: string
+  readonly snippet?: string
+  readonly publishedAt?: string   // ISO-8601
+}
+// 外层还有 content?: string（自由文本）
+// 和 truncated: boolean（由 seam 设置）</pre>
+        <p class="note">
+          <b>没有分数字段</b>。Jev 算出的 0..1 切题度，唯一的归宿是 <code>sources[]</code> 的数组顺序。
+          <code>content</code> 是唯一的自由文本通道。
+        </p>
+      </div>
+    </div>
+
+    <div class="tbl">
+      <table>
+        <thead>
+          <tr><th>jev-search 的产物</th><th>在 seam 里的归宿</th><th>结论</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>intent</code> / <code>found</code> / <code>lane</code> 事件</td>
+            <td>无流式通道 —— <code>search()</code> 只是一个 Promise，中途没有回调面</td>
+            <td class="verdict-cell no">✗ 只能挤进 content 文本</td>
+          </tr>
+          <tr>
+            <td>relevance 0..1</td>
+            <td><code>WebSearchSource</code> 没有分数字段</td>
+            <td class="verdict-cell part">⚠ 降级为数组顺序</td>
+          </tr>
+          <tr>
+            <td>Best / Newest 切换、可编辑 chip</td>
+            <td>没有 UI 面；provider 是 Host 侧代码</td>
+            <td class="verdict-cell no">✗ 降级为配置项</td>
+          </tr>
+          <tr>
+            <td>window（24h / 7d / 30d）</td>
+            <td>TinyFish 有 <code>after_date</code> / <code>recency_minutes</code>；AnySearch <b>无任何时间过滤</b></td>
+            <td class="verdict-cell part">⚠ 只能单边生效</td>
+          </tr>
+          <tr>
+            <td>12 个源的 <code>source_*</code> noul</td>
+            <td>AnySearch 有 40 个 sub-domain，其中约 7 类是真 vertical；HN / YouTube / Wikipedia / 新闻只能走 general</td>
+            <td class="verdict-cell part">⚠ 源集合缩水</td>
+          </tr>
+          <tr>
+            <td>每 lane 独立失败</td>
+            <td>provider 内部即可实现，seam 不关心</td>
+            <td class="verdict-cell ok">✓ 无损</td>
+          </tr>
+          <tr>
+            <td><code>cache.ts</code> 的 KV 缓存</td>
+            <td><code>ctx.storage</code> 的 <code>KvFacet</code>，或进程内 Map</td>
+            <td class="verdict-cell ok">✓ 无损</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ═══════════════════ 3. 落地细节 ═══════════════════ -->
+  <section class="sec">
+    <div class="sec-head"><h2><span class="num">3</span>落地细节</h2></div>
+    <p class="sec-sub">
+      全部改动都在 hydrasearch 内部：新增一个 <code>lib/jev.js</code> 传输层、一个 <code>lib/candidates.js</code>，
+      以及在 provider 的 <code>search()</code> 外面包一层。只有 <code>hydrasearch</code> 一个 provider。
+    </p>
+
+    <div class="plan-grid">
+
+      <div class="panel">
+        <h4><span class="kicker">代码改动</span>provider 内部，形状不变</h4>
+        <div class="panel-body">
+          <pre class="diffbox">  // lib/index.js — HydraSearchProvider.search()
+<span class="dim">  async search(request, signal) {</span>
+    await (this.keyStore()?.ensureHydrated() ?? Promise.resolve())
+<span class="add">+   const judge = this.judgeRuntime()</span>
+<span class="add">+   const candidates = buildCandidates(request.query)</span>
+<span class="add">+   // 与投机检索并发：判断还没回来，第一个后端已经发出去了</span>
+<span class="add">+   const intent = judge.available()</span>
+<span class="add">+     ? await judge.inferIntent(request.query, candidates, signal)</span>
+<span class="add">+     : null</span>
+<span class="add">+   const lanes = planLanes(intent, request)   // [{backend, query, tag, params, window}]</span>
+
+    const attempts = []
+    let firstFailure = null
+<span class="del">-   for (const backend of this.pinnedOrChain(cfg.searchBackend)) {</span>
+<span class="add">+   for (const lane of lanes) {</span>
+<span class="add">+     for (const backend of this.pinnedOrChain(cfg.searchBackend, lane)) {</span>
+        <span class="dim">// …现有 available() / try / catch 逻辑逐字不动…</span>
+<span class="del">-     const result = await backend.search(request, signal)</span>
+<span class="add">+     const result = await backend.search({ query: lane.query, maxResults }, signal)</span>
+<span class="dim">      }</span>
+    }
+
+<span class="add">+   const merged = mergeItems(gathered)        // canonicalUrl 折叠</span>
+<span class="add">+   const judged = judge.available()</span>
+<span class="add">+     ? await judge.rerank(request.query, merged, signal)   // 一次调用，批 40</span>
+<span class="add">+     : merged</span>
+<span class="add">+   // 排序 + 阈值过滤，但【不切片】：truncated 仍由 seam 决定</span>
+    return {
+<span class="del">-     sources: result.sources,</span>
+<span class="add">+     sources: orderByRelevance(judged),</span>
+      truncated: false,
+<span class="add">+     ...judge.note() ? { content: judge.note() } : {},</span>
+    }
+  }</pre>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h4><span class="kicker">配置面</span>挂在 judge.* 下，默认关闭</h4>
+        <div class="panel-body">
+          <pre class="snippet"><span class="k">judgeEnabled</span>: <span class="s">false</span>          <span class="c"># 关掉 = 今天的行为</span>
+<span class="k">judge</span>:
+  <span class="k">enabled</span>: <span class="s">true</span>
+  <span class="k">baseURL</span>: https://api.typesafe.ai/
+  <span class="k">model</span>: jev-latest        <span class="c"># 别名，响应回传版本化 ID</span>
+  <span class="k">sourceThreshold</span>: <span class="s">0.6</span>     <span class="c"># 对应 SOURCE_PROB_THRESHOLD</span>
+  <span class="k">relevanceDrop</span>: <span class="s">0.35</span>      <span class="c"># 0 = 只排序不过滤</span>
+  <span class="k">maxSources</span>: <span class="s">4</span>            <span class="c"># 控成本：每 lane 是一次检索</span>
+  <span class="k">timeoutMs</span>: <span class="s">8000</span>
+  <span class="k">verbose</span>: <span class="s">false</span></pre>
+          <p style="margin:13px 0 0;font-size:12.5px;line-height:1.6;color:var(--jv-text-2)">
+            凭据：新增 <code style="font-family:var(--jv-mono);font-size:11.5px">HYDRASEARCH_TYPESAFE_API_KEY</code>，
+            沿用既有约定 —— 引用名不能与常见环境变量同名，否则会被环境变量永久遮蔽且写不进去
+            （见 <code style="font-family:var(--jv-mono);font-size:11.5px">lib/tinyfish.js:38-53</code>）。
+            <b>没有 key 时自动视为不可用</b>，退回纯检索链。
+          </p>
+          <p style="margin:11px 0 0;font-size:12.5px;line-height:1.6;color:var(--jv-text-2)">
+            卡片侧：字段表是数据驱动的，但 <code style="font-family:var(--jv-mono);font-size:11.5px">BACKENDS</code>
+            硬编码为两个后端。判题不是第三个 backend，所以不塞进那张表 ——
+            在顶层加一小块「判题」区域即可。
+          </p>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="plan-grid" style="margin-top:20px">
+      <div class="panel">
+        <h4><span class="kicker">诚实性</span>四条降级路径，沿用既有规则</h4>
+        <div class="panel-body">
+          <div class="chain">
+            <div class="chip off">
+              <span class="n">1</span>
+              <span class="body"><b>没有 Jev key</b><span>记 <code>skipped-unavailable</code>（「没试」），不是 <code>failed</code>（「试了并失败」）。搜索结果与今天逐字节一致。</span></span>
+              <span class="flag">关闭</span>
+            </div>
+            <div class="chip">
+              <span class="n">2</span>
+              <span class="body"><b>Jev 调用失败</b><span>退回原 query / 未排序结果，在 <code>content</code> 里写「judging unavailable: 原因」。整条搜索仍然成功。</span></span>
+              <span class="flag" style="color:var(--jv-amber-deep)">降级</span>
+            </div>
+            <div class="chip">
+              <span class="n">3</span>
+              <span class="body"><b>用户取消</b><span>abort 直接抛 <code>WEB_ABORTED</code> —— 不换供应商、不换后端。与 <code>lib/index.js:1105</code> 同一条规则。</span></span>
+              <span class="flag" style="color:var(--jv-blue)">穿透</span>
+            </div>
+            <div class="chip">
+              <span class="n">4</span>
+              <span class="body"><b>Jev 只换值得换的错误</b><span>402 / 429 / 5xx 才换供应商；400 / 401 / 422 不换（重试也是白重试）。</span></span>
+              <span class="flag" style="color:var(--jv-blue)">选择</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h4><span class="kicker">代价</span>都不是瓶颈</h4>
+        <div class="panel-body">
+          <div class="chain">
+            <div class="chip on">
+              <span class="n">¥</span>
+              <span class="body"><b>约 $0.0003 / 次搜索</b><span>Jev 输入 $0.042/Mtok，输出 token 免费。约 6.9k input token。</span></span>
+              <span class="flag">可忽略</span>
+            </div>
+            <div class="chip on">
+              <span class="n">⏱</span>
+              <span class="body"><b>净增 200–350ms</b><span>两次 Jev 调用约 100–150ms each；与投机检索并发可摊掉大部分。<code>web_search</code> 预算是 60000ms。</span></span>
+              <span class="flag">宽裕</span>
+            </div>
+            <div class="chip">
+              <span class="n">!</span>
+              <span class="body"><b>真正的风险是中文精度</b><span>TypeSafe 官方：CJK「handled but not equally well」。<b>搬之前必须做对照实验。</b></span></span>
+              <span class="flag" style="color:var(--jv-red)">待验证</span>
+            </div>
+            <div class="chip">
+              <span class="n">×</span>
+              <span class="body"><b>多 lane 会放大计费</b><span><code>maxSources: 4</code> = 一次 <code>web_search</code> 最多 4 次检索 + 2 次判题。所以要可配。</span></span>
+              <span class="flag" style="color:var(--jv-amber-deep)">注意</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <p>
+      证据：jev-search 源码 <code>--depth 1</code> clone 后逐文件阅读（引用格式 <code>文件:行</code>）；
+      DSH 侧为 <code>app.asar</code> 里 0.1.7-alpha.1 打包树与仓库内 rc.6 依赖树的实测；
+      AnySearch 的 40 个 sub-domain 与「时间字段被静默忽略」为匿名实测结论。
+    </p>
+    <p>完整论证见 <code>docs/jev-search-port-analysis.md</code>。色板与字体取自 <code>@deepseek-ai/dsh-client-ui-theme/lib/client.js</code>。</p>
+  </div>
+
+</div>
+</body>
+</html>

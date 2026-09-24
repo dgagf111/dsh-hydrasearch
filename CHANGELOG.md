@@ -141,6 +141,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Both READMEs were rewritten for the person installing the plugin, not the
+  person maintaining it.** They now lead with the two things a reader actually
+  decides on — that both backends are free and that the rate limits are high
+  enough to forget about — then give a quota/limit table, the install command,
+  and the card's controls. The vendor figures in that table (TinyFish Search
+  30/min · 500/hour and Fetch 150 URLs/min · 1,000 URLs/day, free at any account
+  balance; AnySearch free tier 1,000/day at 20 QPS, anonymous sharing that quota
+  under a per-IP limit) are attributed to the vendors' own pages, with a note
+  that they may change. Dropped in the process: the internal design rationale,
+  the cross-generation shim explanation, the development section, and the file
+  layout — all of which remain in `docs/`. A new "API keys and privacy" section
+  states the single-store contract in user terms: the key stays in the local
+  credential center, is sent only to the service being called, and read/write/
+  clear all address the same place.
 - **API keys now have exactly ONE home: the credential center.** Read, write,
   and clear all address it, so the store the card saves into is the store a
   request authenticates from. The environment, `~/.tinyfish/config.json` (the
