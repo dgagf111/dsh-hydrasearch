@@ -4,7 +4,7 @@
 
 **TinyFish + AnySearch 双后端搜索插件（DeepSeek Harness）。** 注册进 `ctx.web` seam，让内置的 `web_search` / `web_fetch` 走两个可自动故障切换的后端。优先级可在插件页拖动调整，两个后端各自支持其 API 的全部参数，全部配置持久化。
 
-兼容 **DSH 0.1.6-alpha.2**（`@deepseek-ai/*` 0.1.0-rc.6 与 0.1.6-alpha.2）和 **DSH 0.1.7-alpha.1**（`@deepseek-ai/*` 0.1.7-alpha.1）。同一份源码同时适配两代，无需按版本切换分支。
+兼容 **DSH 0.1.6-alpha.2**（`@deepseek-ai/*` 0.1.0-rc.6 与 0.1.6-alpha.2）和 **DSH 0.1.7-rc.1**（同一份源码也兼容 `@deepseek-ai/*` 0.1.7-alpha.1）。无需按版本切换分支。
 
 - [它做什么](#它做什么)
 - [安装](#安装)

@@ -4,7 +4,7 @@
 
 **A TinyFish + AnySearch dual-backend search plugin for DeepSeek Harness.** It registers into the `ctx.web` seam so the built-in `web_search` / `web_fetch` run against two backends with automatic failover. The priority order can be changed by dragging in the plugin page, each backend supports the full parameter set of its API, and all configuration is persisted.
 
-Compatible with **DSH 0.1.6-alpha.2** (`@deepseek-ai/*` 0.1.0-rc.6 and 0.1.6-alpha.2) and **DSH 0.1.7-alpha.1** (`@deepseek-ai/*` 0.1.7-alpha.1). One source tree serves both generations — there is no per-version branch.
+Compatible with **DSH 0.1.6-alpha.2** (`@deepseek-ai/*` 0.1.0-rc.6 and 0.1.6-alpha.2) and **DSH 0.1.7-rc.1** (the same source also supports `@deepseek-ai/*` 0.1.7-alpha.1). There is no per-version branch.
 
 - [What it does](#what-it-does)
 - [Installation](#installation)
